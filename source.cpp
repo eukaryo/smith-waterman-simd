@@ -352,13 +352,15 @@ int SmithWaterman_simd3(
 
 	//上のsimd2版からの変更点：
 	//(1)yoko変数を128bit変数にした。それにより、バイトシフトの際にperm系命令がいらなくなった。
+	//(2)sequence_yokoを128bitだけ読み込むようにした。パディングを160文字に減らした。
+	//(3)sequence_yokoを読み込むタイミングを再内側ループの最初にして、次を読み込む命令をなくした。（出るとき無駄になるので）
 
 
 
-	//先頭15文字と末尾33文字をパディングして176文字にする。
+	//先頭15文字と末尾17文字をパディングして160文字にする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[176];
+	alignas(32)uint8_t obs2p[160];
 	//for (int i = 0; i < 15; ++i)obs2p[i] = 0x80;
 	*(uint64_t *)(&obs2p[0]) = 0x8080'8080'8080'8080ULL;
 	*(uint64_t *)(&obs2p[8]) = 0x8080'8080'8080'8080ULL;
@@ -371,8 +373,6 @@ int SmithWaterman_simd3(
 	obs2p[143] = 0x80;
 	*(uint64_t *)(&obs2p[144]) = 0x8080'8080'8080'8080ULL;
 	*(uint64_t *)(&obs2p[152]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[160]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[168]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -388,8 +388,8 @@ int SmithWaterman_simd3(
 	for (int i = 0; i < 128; i += 16) {
 
 		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&obs1[i]));
-		const __m256i sequence_tate = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0, 0, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
-		const __m256i tate2 = _mm256_slli_epi64(sequence_tate, 2);//2ビット左シフト(=4倍)
+		const __m256i inverse_sequence_tate = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0, 0, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m256i inverse_sequence_tate_x4 = _mm256_slli_epi64(inverse_sequence_tate, 2);//2ビット左シフト(=4倍)
 
 		__m256i naname1 = _mm256_setzero_si256();
 		__m256i naname2 = _mm256_setzero_si256();
@@ -399,19 +399,13 @@ int SmithWaterman_simd3(
 		for (int j = 2; j < 20; ++j) {
 
 			__m128i next_value_yoko = yoko[j];
-			__m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 8]);
 
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。引かれる値はuint8_tで、上位128bitは不定だがあとで潰れるのでよい。
-				const __m256i index_score_matrix_8bit = _mm256_add_epi8(tate2, sequence_yoko);
+				const __m256i sequence_yoko = _mm256_zextsi128_si256(_mm_loadu_si128((__m128i *)&obs2p[(j - 2) * 8]));
+				const __m256i index_score_matrix_8bit = _mm256_add_epi8(inverse_sequence_tate_x4, sequence_yoko);
 				const __m256i value_score_matrix_plus_gap_and_delta_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_8bit);
-
-				//yokoを32文字ロードしていたが、1文字ぶん右シフトしておく。この場所に入れる必然性はないが、software pipeliningを期待して早めに入れる。
-				//sequence_yoko = _mm256_alignr_epi8(_mm256_permute2x128_si256(sequence_yoko, sequence_yoko, 0b1000'0001), sequence_yoko, 1);
-
-				//↑はperm命令とalignr命令が詰まる可能性があって、loaduで同じことをやったほうが速い↓
-				sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 8 + k + 1]);
 
 				//スコアマトリックスの値はuint8_tだったがuint16_tに"キャスト"する。上位128bitは不定だったがここで潰れる。
 				const __m256i tmp2 = _mm256_permute4x64_epi64(value_score_matrix_plus_gap_and_delta_8bit, 0b0001'0000);
