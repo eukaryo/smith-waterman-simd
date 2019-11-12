@@ -403,7 +403,7 @@ int SmithWaterman_simd3(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。引かれる値はuint8_tで、上位128bitは不定だがあとで潰れるのでよい。
-				const __m256i sequence_yoko = _mm256_zextsi128_si256(_mm_loadu_si128((__m128i *)&obs2p[(j - 2) * 8]));
+				const __m256i sequence_yoko = _mm256_zextsi128_si256(_mm_loadu_si128((__m128i *)&obs2p[(j - 2) * 8 + k]));
 				const __m256i index_score_matrix_8bit = _mm256_add_epi8(inverse_sequence_tate_x4, sequence_yoko);
 				const __m256i value_score_matrix_plus_gap_and_delta_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_8bit);
 
