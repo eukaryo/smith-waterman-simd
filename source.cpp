@@ -451,7 +451,7 @@ int SmithWaterman_simd3(
 			//for (int x = 0; x < 4; ++x)std::swap(yoko[j - 2].m128i_i16[x], yoko[j - 2].m128i_i16[7 - x]);
 			yoko[j - 2] = _mm_shuffle_epi8(yoko[j - 2], _mm_set_epi64x(0x0100'0302'0504'0706ULL, 0x0908'0b0a'0d0c'0f0eULL));
 
-			value_yoko = yoko[j];
+			//value_yoko = yoko[j];//最内側ループ内のバイトシフトにより自然とこうなるので代入不要
 		}
 	}
 
