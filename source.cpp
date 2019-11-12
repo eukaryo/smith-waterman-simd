@@ -18,6 +18,8 @@
 #include <sstream>
 #include <regex>
 #include <unordered_map>
+#include <cstring>
+#include <cstdint>
 
 #include <mmintrin.h> //MMX
 #include <xmmintrin.h>//SSE
