@@ -74,13 +74,12 @@ int SmithWaterman_simd(
 	//score matrixは対角成分が正で非対角成分が負、gap penaltyは正を想定
 
 	/*
-	
+
 	[--][a3][a2][a1][a0][b3][b2][b1][b0]
 	[--][--][d2][c3][r3][r7][r*][r*]
 	[--][d1][c2][r2][r6][r*][r*]
 	[d0][c1][r1][r5][r*][r*]
 	[c0][r0][r4][r*][r*]
-
 	計算方法の概略を説明する。簡単のため4ワードのSIMDの場合の図を上に書いた。（実際には16ワードで行う）
 	上の図で、ブラケット"[]"は1ワードを意味する。3が最上位ワードで0が最下位ワードとする。
 	最内側ループが始まる時点で、変数value_yoko, next_value_yoko, naname1, naname2を以下の通りに定義する。
@@ -97,7 +96,6 @@ int SmithWaterman_simd(
 	次回のvalue_yokoとnext_value_yokoは、現在の値を1ワード左シフトすればよい。
 	最内側ループに入ってから抜けるまでの間に、rで始まる平行四辺形状の16セルを計算する。そうすることで、
 	value_yokoとnext_value_yokoのロードをシンプルにできる。
-
 	*/
 
 	//先頭15文字と末尾17文字をパディングして160文字にする。
@@ -464,6 +462,117 @@ int SmithWaterman_simd3(
 	return result;
 }
 
+int SmithWaterman_simd4(
+	const std::array<uint8_t, 128>&obs1,
+	const std::array<uint8_t, 128>&obs2,
+	const std::array<int8_t, 16>&score_matrix,
+	const int8_t gap_penalty) {
+
+
+	//上のsimd3版からの変更点：
+	//(1)文字を全部16bitとして扱うようにした。
+
+
+
+	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
+	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
+	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
+	alignas(32)uint8_t obs2p[320];
+	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
+	for(int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+
+	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
+	*(uint16_t *)(&obs2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+
+	__m256i answer_16bit = _mm256_setzero_si256();
+	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
+	const __m256i gap_16bit = _mm256_set1_epi16(gap_penalty);
+	const __m256i delta_16bit = _mm256_sub_epi16(_mm256_set1_epi16(127), gap_16bit);
+	const __m128i tmp1 = _mm_add_epi8(_mm_loadu_si128((const __m128i *)&score_matrix[0]), _mm_set1_epi8(0x7f));
+	const __m256i scorematrix_plus_gap_and_delta_8bit = _mm256_insertf128_si256(_mm256_castsi128_si256(tmp1), tmp1, 1);
+
+	__m128i yoko[20];
+	for (int i = 0; i < 20; ++i)yoko[i] = _mm_setzero_si128();
+
+	for (int i = 0; i < 128; i += 16) {
+
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
+		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
+
+		__m256i naname1 = _mm256_setzero_si256();
+		__m256i naname2 = _mm256_setzero_si256();
+
+		__m128i value_yoko = yoko[1];
+
+		for (int j = 2; j < 20; ++j) {
+
+			__m128i next_value_yoko = yoko[j];
+
+			for (int k = 0; k < 8; ++k) {
+
+				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
+				const __m256i value_score_matrix_plus_gap_and_delta_16bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_16bit_hi0x80);
+
+				//naname1を1ワード右シフトして、空いた最上位ワードにvalue_yokoの最下位ワードを入れる。
+				const __m256i tmp3 = _mm256_permute2x128_si256(naname1, _mm256_zextsi128_si256(value_yoko), 0b0010'0001);//←ここで_mm256_zextsi128_si256マ？
+				const __m256i naname1_rightshifted = _mm256_alignr_epi8(tmp3, naname1, 2);
+
+				//nanama1,naname1_rightshifted,naname2などを使いDP値を計算して、resultとする
+				const __m256i tmp4 = _mm256_max_epi16(naname1, naname1_rightshifted);
+				const __m256i tmp5 = _mm256_add_epi16(delta_16bit, tmp4);
+				const __m256i tmp6 = _mm256_add_epi16(naname2, value_score_matrix_plus_gap_and_delta_16bit);
+				const __m256i tmp7 = _mm256_max_epi16(tmp5, tmp6);
+				const __m256i result = _mm256_subs_epu16(tmp7, delta_plus_gap_16bit);
+
+				answer_16bit = _mm256_max_epi16(answer_16bit, result);
+
+				//naname2 <- naname1_rightshifted
+				naname2 = naname1_rightshifted;
+
+				//naname1 <- result
+				naname1 = result;
+
+				//value_yokoを1ワード左シフトして、空いた最下位ワードにnext_value_yokoの最上位ワードを入れる
+				//const __m256i tmp8 = _mm256_permute2x128_si256(value_yoko, next_value_yoko, 0b0000'0011);
+				value_yoko = _mm_alignr_epi8(value_yoko, next_value_yoko, 14);
+
+				//next_value_yokoを1ワード左シフト
+				//const __m256i tmp9 = _mm256_permute2x128_si256(next_value_yoko, next_value_yoko, 0b0000'1000);
+				next_value_yoko = _mm_slli_si128(next_value_yoko, 2);
+
+				//resultの最下位ワードをyokoの適切な位置に代入
+				//yoko[j - 1].m256i_i16[15 - k] = result.m256i_i16[0];//←これめっっっっっっちゃ遅い
+
+				//resultの最下位ワードをyokoの適切な位置に代入する。
+				//具体的には、yokoを1ワード右シフトして、空いた最上位ワードにresultの最下位ワードを入れる。あとでワードを逆順にする。
+				//const __m256i tmpa = _mm256_permute2x128_si256(yoko[j - 1], result, 0b0010'0001);
+				yoko[j - 2] = _mm_alignr_epi8(_mm256_castsi256_si128(result), yoko[j - 2], 2);
+			}
+
+			//ここでyokoのワードを逆順にする。
+			//for (int x = 0; x < 4; ++x)std::swap(yoko[j - 2].m128i_i16[x], yoko[j - 2].m128i_i16[7 - x]);
+			yoko[j - 2] = _mm_shuffle_epi8(yoko[j - 2], _mm_set_epi64x(0x0100'0302'0504'0706ULL, 0x0908'0b0a'0d0c'0f0eULL));
+
+			//value_yoko = yoko[j];//最内側ループ内のバイトシフトにより自然とこうなるので代入不要
+		}
+	}
+
+	alignas(32)short candidates[16] = {};
+	_mm256_storeu_si256((__m256i *)candidates, answer_16bit);
+
+	int result = 0;
+	for (int i = 0; i < 16; ++i)result = std::max<int>(result, int(candidates[i]));
+
+	return result;
+}
+
 void TestSimdSmithWaterman() {
 	std::mt19937_64 rnd(10000);
 	std::uniform_int_distribution<int> dna(0, 3);
@@ -486,35 +595,11 @@ void TestSimdSmithWaterman() {
 		const int ans2 = SmithWaterman_simd(a, b, score_matrix, gap_penalty);
 		const int ans3 = SmithWaterman_simd2(a, b, score_matrix, gap_penalty);
 		const int ans4 = SmithWaterman_simd3(a, b, score_matrix, gap_penalty);
-		if (ans1 != ans2) {
-			for (int i = 0; i < 128; ++i) {
-				switch (a[i]) {
-				case 0:std::cout << 'A'; break;
-				case 1:std::cout << 'C'; break;
-				case 2:std::cout << 'G'; break;
-				case 3:std::cout << 'T'; break;
-				}
-			}
-			std::cout << std::endl;
-			for (int i = 0; i < 128; ++i) {
-				switch (b[i]) {
-				case 0:std::cout << 'A'; break;
-				case 1:std::cout << 'C'; break;
-				case 2:std::cout << 'G'; break;
-				case 3:std::cout << 'T'; break;
-				}
-			}
-			std::cout << std::endl;
-			for (int i = 127; i >= 0; --i) {
-				a[i] = 1;
-				const int ans11 = SmithWaterman(a, b, score_matrix, gap_penalty);
-				const int ans12 = SmithWaterman_simd(a, b, score_matrix, gap_penalty);
-				std::cout << i << " " << ans11 << " " << ans12 << std::endl;
-			}
-		}
+		const int ans5 = SmithWaterman_simd4(a, b, score_matrix, gap_penalty);
 		assert(ans1 == ans2);
 		assert(ans1 == ans3);
 		assert(ans1 == ans4);
+		assert(ans1 == ans5);
 	}
 	return;
 }
@@ -560,6 +645,15 @@ void SpeedTest() {
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
 		std::cout << "simd3 version: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000; ++iteration) {
+			volatile int score = SmithWaterman_simd4(a, b, score_matrix, gap_penalty);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd4 version: " << elapsed << " ms / 1M" << std::endl;
 	}
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
