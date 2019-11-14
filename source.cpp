@@ -995,9 +995,9 @@ int SmithWaterman_simd9(
 		gap_penalty * 13, gap_penalty * 14, gap_penalty * 15, gap_penalty * 16);
 	const __m256i offseted_zero2 = _mm256_set_epi16(
 		0, gap_penalty * 1, gap_penalty * 2, gap_penalty * 3,
-		gap_penalty * 4,gap_penalty * 5, gap_penalty * 6, gap_penalty * 7,
-		gap_penalty * 8,gap_penalty * 9, gap_penalty * 10, gap_penalty * 11,
-		gap_penalty * 12,gap_penalty * 13, gap_penalty * 14, gap_penalty * 15);
+		gap_penalty * 4, gap_penalty * 5, gap_penalty * 6, gap_penalty * 7,
+		gap_penalty * 8, gap_penalty * 9, gap_penalty * 10, gap_penalty * 11,
+		gap_penalty * 12, gap_penalty * 13, gap_penalty * 14, gap_penalty * 15);
 	const __m128i gapx16 = _mm_set1_epi16(gap_penalty * 16);
 
 	__m128i yoko[21];
@@ -1102,14 +1102,14 @@ int SmithWaterman_8bit111simd(
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
 	const __m256i scorematrix_plus_gap_and_scoreoffset_8bit = _mm256_set_epi8(
-		GAP + MISMATCH + MATCH, GAP, GAP, GAP,
-		GAP, GAP + MISMATCH + MATCH, GAP, GAP,
-		GAP, GAP, GAP + MISMATCH + MATCH, GAP,
-		GAP, GAP, GAP, GAP + MISMATCH + MATCH,
-		GAP + MISMATCH + MATCH, GAP, GAP, GAP,
-		GAP, GAP + MISMATCH + MATCH, GAP, GAP,
-		GAP, GAP, GAP + MISMATCH + MATCH, GAP,
-		GAP, GAP, GAP, GAP + MISMATCH + MATCH);
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH,
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
 	const __m256i offseted_zero = _mm256_set_epi8(
 		GAP * 0x01, GAP * 0x02, GAP * 0x03, GAP * 0x04, GAP * 0x05, GAP * 0x06, GAP * 0x07, GAP * 0x08,
 		GAP * 0x09, GAP * 0x0A, GAP * 0x0B, GAP * 0x0C, GAP * 0x0D, GAP * 0x0E, GAP * 0x0F, GAP * 0x10,
@@ -1146,8 +1146,7 @@ int SmithWaterman_8bit111simd(
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
 				const __m256i sequence_yoko_8bit = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k]);
 				const __m256i index_score_matrix_8bit = _mm256_add_epi8(inverse_sequence_tate_8bit_x4, sequence_yoko_8bit);
-				const __m256i value_score_matrix_plus_gap_8bit = _mm256_subs_epu8(_mm256_shuffle_epi8(scorematrix_plus_gap_and_scoreoffset_8bit, index_score_matrix_8bit), _mm256_set1_epi8(MISMATCH));
-				//注意:↑でMISMATCHを符号なし飽和演算で引いているが、これがバグらないのは MISMATCH <= GAP だから。逆に言えば、例えばMISMATCH=2で(1,2,1)にしたいときはたぶんこれではいけない。
+				const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_scoreoffset_8bit, index_score_matrix_8bit);
 
 				//naname1を1ワード右シフトして、空いた最上位ワードにvalue_yokoの最下位ワードを入れる。
 				const __m256i tmp3 = _mm256_permute2x128_si256(naname1, _mm256_zextsi128_si256(value_yoko), 0b0010'0001);//←ここで_mm256_zextsi128_si256マ？
