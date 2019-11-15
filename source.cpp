@@ -1101,7 +1101,7 @@ int SmithWaterman_8bit111simd(
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
-	const __m256i scorematrix_plus_gap_and_scoreoffset_8bit = _mm256_set_epi8(
+	const __m256i scorematrix_plus_gap_8bit = _mm256_set_epi8(
 		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
 		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
 		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
@@ -1109,7 +1109,7 @@ int SmithWaterman_8bit111simd(
 		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
 		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
 		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
-		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。逆に言えば、MISMATCH > GAPにするときはオフセットを与える必要がたぶんあるだろう。
 	const __m256i offseted_zero = _mm256_set_epi8(
 		GAP * 0x01, GAP * 0x02, GAP * 0x03, GAP * 0x04, GAP * 0x05, GAP * 0x06, GAP * 0x07, GAP * 0x08,
 		GAP * 0x09, GAP * 0x0A, GAP * 0x0B, GAP * 0x0C, GAP * 0x0D, GAP * 0x0E, GAP * 0x0F, GAP * 0x10,
@@ -1146,7 +1146,7 @@ int SmithWaterman_8bit111simd(
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
 				const __m256i sequence_yoko_8bit = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k]);
 				const __m256i index_score_matrix_8bit = _mm256_add_epi8(inverse_sequence_tate_8bit_x4, sequence_yoko_8bit);
-				const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_scoreoffset_8bit, index_score_matrix_8bit);
+				const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix_8bit);
 
 				//naname1を1ワード右シフトして、空いた最上位ワードにvalue_yokoの最下位ワードを入れる。
 				const __m256i tmp3 = _mm256_permute2x128_si256(naname1, _mm256_zextsi128_si256(value_yoko), 0b0010'0001);//←ここで_mm256_zextsi128_si256マ？
@@ -1197,6 +1197,73 @@ int SmithWaterman_8bit111simd(
 
 	return result;
 }
+
+int SmithWaterman_8b111x32(
+	const std::array<uint8_t, 128 * 32>&obs1,
+	const std::array<uint8_t, 128>&obs2,
+	std::array<int, 32>& dest) {
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
+
+	alignas(32)uint8_t inverted_obs1[32 * 128];
+	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
+
+	__m256i answer_8bit = _mm256_setzero_si256();
+	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
+	const __m256i scorematrix_plus_gap_8bit = _mm256_set_epi8(
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH,
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
+
+	__m256i yoko[130];
+	for (int i = 0; i < 130; ++i)yoko[i] = _mm256_setzero_si256();
+
+
+	for (int i = 0; i < 128; ++i) {
+		__m256i prev = _mm256_setzero_si256();
+		__m256i prev2 = _mm256_setzero_si256();
+		const __m256i sequence_tate_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[i * 32]), 2);
+
+		__m256i naname = yoko[1];
+		__m256i ue;
+
+		for (int j = 2; j < 130; ++j) {
+
+			ue = yoko[j];
+
+			const __m256i sequence_yoko = _mm256_set1_epi8(obs2[j - 2]);
+			const __m256i index_score_matrix_8bit = _mm256_add_epi8(sequence_tate_x4, sequence_yoko);
+			const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix_8bit);
+
+			const __m256i tmp4y = _mm256_max_epu8(prev, ue);
+			const __m256i tmp5y = _mm256_adds_epu8(naname, value_score_matrix_plus_gap_8bit);
+			const __m256i tmp6y = _mm256_max_epu8(tmp5y, tmp4y);
+			const __m256i result = _mm256_subs_epu8(tmp6y, gap_8bit);
+
+			answer_8bit = _mm256_max_epu8(answer_8bit, result);
+
+			yoko[j - 2] = prev2;
+			prev2 = prev;
+			prev = result;
+			naname = ue;
+
+		}
+		yoko[128] = prev2;
+		yoko[129] = prev;
+	}
+
+	alignas(32)uint8_t answers[32] = {};
+	_mm256_storeu_si256((__m256i *)answers, answer_8bit);
+
+	for (int i = 0; i < 32; ++i)dest[i] = answers[i];
+	return answers[0];
+}
+
 
 void TestSimdSmithWaterman() {
 	std::mt19937_64 rnd(10000);
@@ -1264,6 +1331,35 @@ void TestSimdSmithWaterman111() {
 	return;
 }
 
+void TestSimdSmithWaterman111x32() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dna(0, 3);
+
+	for (int iteration = 0; iteration < 10000000; iteration++) {
+		std::cout << iteration << std::endl;
+		std::array<uint8_t, 128 * 32>a;
+		std::array<uint8_t, 128>b;
+		std::array<int, 32>dest;
+		std::array<int, 32>ref_ans;
+		for (int i = 0; i < 128 * 32; ++i)a[i] = dna(rnd);
+		for (int i = 0; i < 128; ++i)b[i] = dna(rnd);
+		std::array<int8_t, 16>score_matrix = {
+			1,-1,-1,-1,
+			-1,1,-1,-1,
+			-1,-1,1,-1,
+			-1,-1,-1,1 };
+		uint8_t gap_penalty = 1;
+		for (int i = 0; i < 32; ++i) {
+			std::array<uint8_t, 128>aa;
+			for (int j = 0; j < 128; ++j)aa[j] = a[i * 128 + j];
+			const int ans1 = SmithWaterman(aa, b, score_matrix, gap_penalty);
+			ref_ans[i] = ans1;
+		}
+		const int ans2 = SmithWaterman_8b111x32(a, b, dest);
+		for (int i = 0; i < 32; ++i)assert(ref_ans[i] == dest[i]);
+	}
+	return;
+}
 
 void SpeedTest() {
 	std::mt19937_64 rnd(10000);
@@ -1405,15 +1501,106 @@ void InfinitySW() {
 	return;
 }
 
+void InfinitySW111x32() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dna(0, 3);
+
+	std::array<uint8_t, 128 * 32>a;
+	std::array<uint8_t, 128>b;
+	std::array<int, 32>dest;
+	for (int i = 0; i < 128 * 32; ++i)a[i] = dna(rnd);
+	for (int i = 0; i < 128; ++i)b[i] = dna(rnd);
+	{
+		for (;;) {
+			volatile int score = SmithWaterman_8b111x32(a, b, dest);
+		}
+	}
+	return;
+}
+
+
+void speedtest111x32() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dna(0, 3);
+
+	std::array<uint8_t, 128 * 32>aa;
+	std::array<uint8_t, 128>a, b;
+	std::array<int, 32>dest;
+	for (int i = 0; i < 128 * 32; ++i)aa[i] = dna(rnd);
+	for (int i = 0; i < 128; ++i) {
+		a[i] = dna(rnd);
+		b[i] = dna(rnd);
+	}
+
+	std::array<int8_t, 16>score_matrix = {
+		1,-1,-1,-1,
+		-1,1,-1,-1,
+		-1,-1,1,-1,
+		-1,-1,-1,1 };
+	uint8_t gap_penalty = 1;
+
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000; ++iteration) {
+			volatile int score = SmithWaterman_simd4(a, b, score_matrix, gap_penalty);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd4 version: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000; ++iteration) {
+			volatile int score = SmithWaterman_simd7(a, b, score_matrix, gap_penalty);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd7 version: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000; ++iteration) {
+			volatile int score = SmithWaterman_simd9(a, b, score_matrix, gap_penalty);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd9 version: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000; ++iteration) {
+			volatile int score = SmithWaterman_8bit111simd(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd8bit111: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
+			volatile int score = SmithWaterman_8b111x32(aa, b, dest);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd8bit111 x32: " << elapsed << " ms / 1M" << std::endl;
+	}
+	return;
+}
+
 
 int main(void) {
 
+	//TestSimdSmithWaterman111x32();
 	//TestSimdSmithWaterman111();
 	//TestSimdSmithWaterman();
+	//InfinitySW111x32();
 	//InfinitySW();
-	SpeedTest();
-	SpeedTest();
-	SpeedTest();
+	speedtest111x32();
+	speedtest111x32();
+	speedtest111x32();
+	//SpeedTest();
+	//SpeedTest();
+	//SpeedTest();
 
 	return 0;
 }
