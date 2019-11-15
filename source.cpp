@@ -1198,10 +1198,16 @@ int SmithWaterman_8bit111simd(
 	return result;
 }
 
-int SmithWaterman_8b111x32(
+int SmithWaterman_8b111x32mark1(
 	const std::array<uint8_t, 128 * 32>&obs1,
 	const std::array<uint8_t, 128>&obs2,
 	std::array<int, 32>& dest) {
+
+	//上のSmithWaterman_8bit111simdからの変更点:
+	//(1)obs1として32本の128merをまとめて受け取り、結果をまとめてdestに入れて返すようにした。
+	//   （ちなみに返り値はdest[0]だがこれはなんとなくで深い意味はない）
+	//   平行四辺形埋めだと実質160merぶんの計算をやっており、はみ出た領域に対する計算が20%を占めていた。
+	//   32本の入力を転置してスライシングすればはみ出ないし、斜め埋めコンセプトのためのpermuteなどが不要になり、効率化すると思われた。
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
@@ -1255,6 +1261,231 @@ int SmithWaterman_8b111x32(
 		}
 		yoko[128] = prev2;
 		yoko[129] = prev;
+	}
+
+	alignas(32)uint8_t answers[32] = {};
+	_mm256_storeu_si256((__m256i *)answers, answer_8bit);
+
+	for (int i = 0; i < 32; ++i)dest[i] = answers[i];
+	return answers[0];
+}
+
+int SmithWaterman_8b111x32mark2(
+	const std::array<uint8_t, 128 * 32>&obs1,
+	const std::array<uint8_t, 128>&obs2,
+	std::array<int, 32>& dest) {
+
+	//上のmark1からの変更点：
+	//(1)DP本体を縦方向に2個ずつアンロールした。
+	//   レジスタリネーミングとアウトオブオーダー実行があれば、クリティカルパスの影響が減ると期待できる。
+
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
+
+	alignas(32)uint8_t inverted_obs1[32 * 128];
+	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
+
+	__m256i answer_8bit = _mm256_setzero_si256();
+	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
+	const __m256i scorematrix_plus_gap_8bit = _mm256_set_epi8(
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH,
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
+
+	__m256i yoko[130];
+	for (int i = 0; i < 130; ++i)yoko[i] = _mm256_setzero_si256();
+
+
+	for (int i = 0; i < 128; i += 2) {
+		__m256i prev0 = _mm256_setzero_si256();
+		__m256i prev02 = _mm256_setzero_si256();
+		__m256i prev1 = _mm256_setzero_si256();
+		__m256i prev12 = _mm256_setzero_si256();
+		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 0) * 32]), 2);
+		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 1) * 32]), 2);
+
+		__m256i naname = yoko[1];
+		__m256i ue;
+
+		for (int j = 2; j < 130; ++j) {
+
+			ue = yoko[j];
+
+			const __m256i sequence_yoko = _mm256_set1_epi8(obs2[j - 2]);
+
+			const __m256i index_score_matrix0_8bit = _mm256_add_epi8(sequence_tate0_x4, sequence_yoko);
+			const __m256i value_score_matrix0_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix0_8bit);
+			const __m256i tmp4y0 = _mm256_max_epu8(prev0, ue);
+			const __m256i tmp5y0 = _mm256_adds_epu8(naname, value_score_matrix0_plus_gap_8bit);
+			const __m256i tmp6y0 = _mm256_max_epu8(tmp5y0, tmp4y0);
+			const __m256i result0 = _mm256_subs_epu8(tmp6y0, gap_8bit);
+			answer_8bit = _mm256_max_epu8(answer_8bit, result0);
+
+			const __m256i index_score_matrix1_8bit = _mm256_add_epi8(sequence_tate1_x4, sequence_yoko);
+			const __m256i value_score_matrix1_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix1_8bit);
+			const __m256i tmp4y1 = _mm256_max_epu8(prev1, result0);
+			const __m256i tmp5y1 = _mm256_adds_epu8(prev0, value_score_matrix1_plus_gap_8bit);
+			const __m256i tmp6y1 = _mm256_max_epu8(tmp5y1, tmp4y1);
+			const __m256i result1 = _mm256_subs_epu8(tmp6y1, gap_8bit);
+			answer_8bit = _mm256_max_epu8(answer_8bit, result1);
+
+
+			yoko[j - 2] = prev12;
+			prev12 = prev1;
+			prev1 = result1;
+			prev02 = prev0;
+			prev0 = result0;
+			naname = ue;
+
+		}
+		yoko[128] = prev12;
+		yoko[129] = prev1;
+	}
+
+	alignas(32)uint8_t answers[32] = {};
+	_mm256_storeu_si256((__m256i *)answers, answer_8bit);
+
+	for (int i = 0; i < 32; ++i)dest[i] = answers[i];
+	return answers[0];
+}
+
+int SmithWaterman_8b111x32mark3(
+	const std::array<uint8_t, 128 * 32>&obs1,
+	const std::array<uint8_t, 128>&obs2,
+	std::array<int, 32>& dest) {
+
+	//上のmark2からの変更点：
+	//(1)最初のバイト行列転置をAVX2で高速化した。
+	//   参考: https://qiita.com/beru/items/12b4249c95a012a28ccd
+
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
+
+	alignas(32)uint8_t inverted_obs1[32 * 128];
+	//for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
+
+#define INVERT_16_16(ii,jj) \
+do{\
+	__m256i a0 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0x8 * 128]), (__m128i *)(&obs1[ii + 0x0 * 128]));\
+	__m256i a1 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0x9 * 128]), (__m128i *)(&obs1[ii + 0x1 * 128]));\
+	__m256i a2 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xA * 128]), (__m128i *)(&obs1[ii + 0x2 * 128]));\
+	__m256i a3 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xB * 128]), (__m128i *)(&obs1[ii + 0x3 * 128]));\
+	__m256i a4 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xC * 128]), (__m128i *)(&obs1[ii + 0x4 * 128]));\
+	__m256i a5 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xD * 128]), (__m128i *)(&obs1[ii + 0x5 * 128]));\
+	__m256i a6 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xE * 128]), (__m128i *)(&obs1[ii + 0x6 * 128]));\
+	__m256i a7 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xF * 128]), (__m128i *)(&obs1[ii + 0x7 * 128]));\
+	__m256i b0 = _mm256_unpacklo_epi8(a0, a1);\
+	__m256i b1 = _mm256_unpacklo_epi8(a2, a3);\
+	__m256i b2 = _mm256_unpacklo_epi8(a4, a5);\
+	__m256i b3 = _mm256_unpacklo_epi8(a6, a7);\
+	__m256i b4 = _mm256_unpackhi_epi8(a0, a1);\
+	__m256i b5 = _mm256_unpackhi_epi8(a2, a3);\
+	__m256i b6 = _mm256_unpackhi_epi8(a4, a5);\
+	__m256i b7 = _mm256_unpackhi_epi8(a6, a7);\
+	a0 = _mm256_unpacklo_epi16(b0, b1);\
+	a1 = _mm256_unpacklo_epi16(b2, b3);\
+	a2 = _mm256_unpackhi_epi16(b0, b1);\
+	a3 = _mm256_unpackhi_epi16(b2, b3);\
+	a4 = _mm256_unpacklo_epi16(b4, b5);\
+	a5 = _mm256_unpacklo_epi16(b6, b7);\
+	a6 = _mm256_unpackhi_epi16(b4, b5);\
+	a7 = _mm256_unpackhi_epi16(b6, b7);\
+	b0 = _mm256_unpacklo_epi32(a0, a1);\
+	b1 = _mm256_unpackhi_epi32(a0, a1);\
+	b2 = _mm256_unpacklo_epi32(a2, a3);\
+	b3 = _mm256_unpackhi_epi32(a2, a3);\
+	b4 = _mm256_unpacklo_epi32(a4, a5);\
+	b5 = _mm256_unpackhi_epi32(a4, a5);\
+	b6 = _mm256_unpacklo_epi32(a6, a7);\
+	b7 = _mm256_unpackhi_epi32(a6, a7);\
+	a0 = _mm256_permute4x64_epi64(b0, _MM_SHUFFLE(3, 1, 2, 0));\
+	a1 = _mm256_permute4x64_epi64(b1, _MM_SHUFFLE(3, 1, 2, 0));\
+	a2 = _mm256_permute4x64_epi64(b2, _MM_SHUFFLE(3, 1, 2, 0));\
+	a3 = _mm256_permute4x64_epi64(b3, _MM_SHUFFLE(3, 1, 2, 0));\
+	a4 = _mm256_permute4x64_epi64(b4, _MM_SHUFFLE(3, 1, 2, 0));\
+	a5 = _mm256_permute4x64_epi64(b5, _MM_SHUFFLE(3, 1, 2, 0));\
+	a6 = _mm256_permute4x64_epi64(b6, _MM_SHUFFLE(3, 1, 2, 0));\
+	a7 = _mm256_permute4x64_epi64(b7, _MM_SHUFFLE(3, 1, 2, 0));\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x1 * 32]), (__m128i *)(&inverted_obs1[jj + 0x0 * 32]), a0);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x3 * 32]), (__m128i *)(&inverted_obs1[jj + 0x2 * 32]), a1);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x5 * 32]), (__m128i *)(&inverted_obs1[jj + 0x4 * 32]), a2);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x7 * 32]), (__m128i *)(&inverted_obs1[jj + 0x6 * 32]), a3);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x9 * 32]), (__m128i *)(&inverted_obs1[jj + 0x8 * 32]), a4);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xB * 32]), (__m128i *)(&inverted_obs1[jj + 0xA * 32]), a5);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xD * 32]), (__m128i *)(&inverted_obs1[jj + 0xC * 32]), a6);\
+	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xF * 32]), (__m128i *)(&inverted_obs1[jj + 0xE * 32]), a7);\
+}while(0)
+	for (int i = 0; i < 128; i += 16)for (int j = 0; j < 32; j += 16) {
+		INVERT_16_16((j * 128 + i), (i * 32 + j));
+	}
+
+#undef INVERT_16_16
+
+	__m256i answer_8bit = _mm256_setzero_si256();
+	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
+	const __m256i scorematrix_plus_gap_8bit = _mm256_set_epi8(
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH,
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
+
+	__m256i yoko[130];
+	for (int i = 0; i < 130; ++i)yoko[i] = _mm256_setzero_si256();
+
+
+	for (int i = 0; i < 128; i += 2) {
+		__m256i prev0 = _mm256_setzero_si256();
+		__m256i prev02 = _mm256_setzero_si256();
+		__m256i prev1 = _mm256_setzero_si256();
+		__m256i prev12 = _mm256_setzero_si256();
+		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 0) * 32]), 2);
+		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 1) * 32]), 2);
+
+		__m256i naname = yoko[1];
+		__m256i ue;
+
+		for (int j = 2; j < 130; ++j) {
+
+			ue = yoko[j];
+
+			const __m256i sequence_yoko = _mm256_set1_epi8(obs2[j - 2]);
+
+			const __m256i index_score_matrix0_8bit = _mm256_add_epi8(sequence_tate0_x4, sequence_yoko);
+			const __m256i value_score_matrix0_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix0_8bit);
+			const __m256i tmp4y0 = _mm256_max_epu8(prev0, ue);
+			const __m256i tmp5y0 = _mm256_adds_epu8(naname, value_score_matrix0_plus_gap_8bit);
+			const __m256i tmp6y0 = _mm256_max_epu8(tmp5y0, tmp4y0);
+			const __m256i result0 = _mm256_subs_epu8(tmp6y0, gap_8bit);
+			answer_8bit = _mm256_max_epu8(answer_8bit, result0);
+
+			const __m256i index_score_matrix1_8bit = _mm256_add_epi8(sequence_tate1_x4, sequence_yoko);
+			const __m256i value_score_matrix1_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix1_8bit);
+			const __m256i tmp4y1 = _mm256_max_epu8(prev1, result0);
+			const __m256i tmp5y1 = _mm256_adds_epu8(prev0, value_score_matrix1_plus_gap_8bit);
+			const __m256i tmp6y1 = _mm256_max_epu8(tmp5y1, tmp4y1);
+			const __m256i result1 = _mm256_subs_epu8(tmp6y1, gap_8bit);
+			answer_8bit = _mm256_max_epu8(answer_8bit, result1);
+
+
+			yoko[j - 2] = prev12;
+			prev12 = prev1;
+			prev1 = result1;
+			prev02 = prev0;
+			prev0 = result0;
+			naname = ue;
+
+		}
+		yoko[128] = prev12;
+		yoko[129] = prev1;
 	}
 
 	alignas(32)uint8_t answers[32] = {};
@@ -1355,7 +1586,11 @@ void TestSimdSmithWaterman111x32() {
 			const int ans1 = SmithWaterman(aa, b, score_matrix, gap_penalty);
 			ref_ans[i] = ans1;
 		}
-		const int ans2 = SmithWaterman_8b111x32(a, b, dest);
+		const int ans2 = SmithWaterman_8b111x32mark1(a, b, dest);
+		for (int i = 0; i < 32; ++i)assert(ref_ans[i] == dest[i]);
+		const int ans3 = SmithWaterman_8b111x32mark2(a, b, dest);
+		for (int i = 0; i < 32; ++i)assert(ref_ans[i] == dest[i]);
+		const int ans4 = SmithWaterman_8b111x32mark3(a, b, dest);
 		for (int i = 0; i < 32; ++i)assert(ref_ans[i] == dest[i]);
 	}
 	return;
@@ -1512,7 +1747,7 @@ void InfinitySW111x32() {
 	for (int i = 0; i < 128; ++i)b[i] = dna(rnd);
 	{
 		for (;;) {
-			volatile int score = SmithWaterman_8b111x32(a, b, dest);
+			volatile int score = SmithWaterman_8b111x32mark1(a, b, dest);
 		}
 	}
 	return;
@@ -1578,11 +1813,29 @@ void speedtest111x32() {
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
 		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
-			volatile int score = SmithWaterman_8b111x32(aa, b, dest);
+			volatile int score = SmithWaterman_8b111x32mark1(aa, b, dest);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
 		std::cout << "simd8bit111 x32: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
+			volatile int score = SmithWaterman_8b111x32mark2(aa, b, dest);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd8bit111 x32 mark2: " << elapsed << " ms / 1M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
+			volatile int score = SmithWaterman_8b111x32mark3(aa, b, dest);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd8bit111 x32 mark3: " << elapsed << " ms / 1M" << std::endl;
 	}
 	return;
 }
