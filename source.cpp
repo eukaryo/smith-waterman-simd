@@ -1211,8 +1211,8 @@ int SmithWaterman_8b111x32mark1(
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
-	alignas(32)uint8_t inverted_obs1[32 * 128];
-	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
+	alignas(32)uint8_t transposed_obs1[32 * 128];
+	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_obs1[i * 32 + j] = obs1[j * 128 + i];
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
@@ -1233,7 +1233,7 @@ int SmithWaterman_8b111x32mark1(
 	for (int i = 0; i < 128; ++i) {
 		__m256i prev = _mm256_setzero_si256();
 		__m256i prev2 = _mm256_setzero_si256();
-		const __m256i sequence_tate_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[i * 32]), 2);
+		const __m256i sequence_tate_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[i * 32]), 2);
 
 		__m256i naname = yoko[1];
 		__m256i ue;
@@ -1282,8 +1282,8 @@ int SmithWaterman_8b111x32mark2(
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
-	alignas(32)uint8_t inverted_obs1[32 * 128];
-	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
+	alignas(32)uint8_t transposed_obs1[32 * 128];
+	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_obs1[i * 32 + j] = obs1[j * 128 + i];
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
@@ -1306,8 +1306,8 @@ int SmithWaterman_8b111x32mark2(
 		__m256i prev02 = _mm256_setzero_si256();
 		__m256i prev1 = _mm256_setzero_si256();
 		__m256i prev12 = _mm256_setzero_si256();
-		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 0) * 32]), 2);
-		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 1) * 32]), 2);
+		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 0) * 32]), 2);
+		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 1) * 32]), 2);
 
 		__m256i naname = yoko[1];
 		__m256i ue;
@@ -1366,8 +1366,8 @@ int SmithWaterman_8b111x32mark3(
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
-	alignas(32)uint8_t inverted_obs1[32 * 128];
-	//for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
+	alignas(32)uint8_t transposed_obs1[32 * 128];
+	//for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_obs1[i * 32 + j] = obs1[j * 128 + i];
 
 #define TRANSPOSE_16_16(ii,jj) \
 do{\
@@ -1411,14 +1411,14 @@ do{\
 	a5 = _mm256_permute4x64_epi64(b5, _MM_SHUFFLE(3, 1, 2, 0));\
 	a6 = _mm256_permute4x64_epi64(b6, _MM_SHUFFLE(3, 1, 2, 0));\
 	a7 = _mm256_permute4x64_epi64(b7, _MM_SHUFFLE(3, 1, 2, 0));\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x1 * 32]), (__m128i *)(&inverted_obs1[jj + 0x0 * 32]), a0);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x3 * 32]), (__m128i *)(&inverted_obs1[jj + 0x2 * 32]), a1);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x5 * 32]), (__m128i *)(&inverted_obs1[jj + 0x4 * 32]), a2);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x7 * 32]), (__m128i *)(&inverted_obs1[jj + 0x6 * 32]), a3);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0x9 * 32]), (__m128i *)(&inverted_obs1[jj + 0x8 * 32]), a4);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xB * 32]), (__m128i *)(&inverted_obs1[jj + 0xA * 32]), a5);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xD * 32]), (__m128i *)(&inverted_obs1[jj + 0xC * 32]), a6);\
-	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xF * 32]), (__m128i *)(&inverted_obs1[jj + 0xE * 32]), a7);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x1 * 32]), (__m128i *)(&transposed_obs1[jj + 0x0 * 32]), a0);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x3 * 32]), (__m128i *)(&transposed_obs1[jj + 0x2 * 32]), a1);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x5 * 32]), (__m128i *)(&transposed_obs1[jj + 0x4 * 32]), a2);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x7 * 32]), (__m128i *)(&transposed_obs1[jj + 0x6 * 32]), a3);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x9 * 32]), (__m128i *)(&transposed_obs1[jj + 0x8 * 32]), a4);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0xB * 32]), (__m128i *)(&transposed_obs1[jj + 0xA * 32]), a5);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0xD * 32]), (__m128i *)(&transposed_obs1[jj + 0xC * 32]), a6);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0xF * 32]), (__m128i *)(&transposed_obs1[jj + 0xE * 32]), a7);\
 }while(0)
 	for (int i = 0; i < 128; i += 16)for (int j = 0; j < 32; j += 16) {
 		TRANSPOSE_16_16((j * 128 + i), (i * 32 + j));
@@ -1447,8 +1447,8 @@ do{\
 		__m256i prev02 = _mm256_setzero_si256();
 		__m256i prev1 = _mm256_setzero_si256();
 		__m256i prev12 = _mm256_setzero_si256();
-		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 0) * 32]), 2);
-		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&inverted_obs1[(i + 1) * 32]), 2);
+		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 0) * 32]), 2);
+		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 1) * 32]), 2);
 
 		__m256i naname = yoko[1];
 		__m256i ue;
