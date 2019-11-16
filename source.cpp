@@ -1369,7 +1369,7 @@ int SmithWaterman_8b111x32mark3(
 	alignas(32)uint8_t inverted_obs1[32 * 128];
 	//for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)inverted_obs1[i * 32 + j] = obs1[j * 128 + i];
 
-#define INVERT_16_16(ii,jj) \
+#define TRANSPOSE_16_16(ii,jj) \
 do{\
 	__m256i a0 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0x8 * 128]), (__m128i *)(&obs1[ii + 0x0 * 128]));\
 	__m256i a1 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0x9 * 128]), (__m128i *)(&obs1[ii + 0x1 * 128]));\
@@ -1421,10 +1421,10 @@ do{\
 	_mm256_storeu2_m128i((__m128i *)(&inverted_obs1[jj + 0xF * 32]), (__m128i *)(&inverted_obs1[jj + 0xE * 32]), a7);\
 }while(0)
 	for (int i = 0; i < 128; i += 16)for (int j = 0; j < 32; j += 16) {
-		INVERT_16_16((j * 128 + i), (i * 32 + j));
+		TRANSPOSE_16_16((j * 128 + i), (i * 32 + j));
 	}
 
-#undef INVERT_16_16
+#undef TRANSPOSE_16_16
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
