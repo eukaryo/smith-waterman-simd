@@ -1812,30 +1812,30 @@ void speedtest111x32() {
 	}
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
-		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
+		for (int iteration = 0; iteration < 10000000 / 32; ++iteration) {
 			volatile int score = SmithWaterman_8b111x32mark1(aa, b, dest);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
-		std::cout << "simd8bit111 x32: " << elapsed << " ms / 1M" << std::endl;
+		std::cout << "simd8bit111 x32 mark1: " << elapsed << " ms / 10M" << std::endl;
 	}
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
-		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
+		for (int iteration = 0; iteration < 10000000 / 32; ++iteration) {
 			volatile int score = SmithWaterman_8b111x32mark2(aa, b, dest);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
-		std::cout << "simd8bit111 x32 mark2: " << elapsed << " ms / 1M" << std::endl;
+		std::cout << "simd8bit111 x32 mark2: " << elapsed << " ms / 10M" << std::endl;
 	}
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
-		for (int iteration = 0; iteration < 1000000 / 32; ++iteration) {
+		for (int iteration = 0; iteration < 10000000 / 32; ++iteration) {
 			volatile int score = SmithWaterman_8b111x32mark3(aa, b, dest);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
-		std::cout << "simd8bit111 x32 mark3: " << elapsed << " ms / 1M" << std::endl;
+		std::cout << "simd8bit111 x32 mark3: " << elapsed << " ms / 10M" << std::endl;
 	}
 	return;
 }
