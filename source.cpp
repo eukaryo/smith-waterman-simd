@@ -1495,6 +1495,232 @@ do{\
 	return answers[0];
 }
 
+int unpack(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&dest) {
+	for (int i = 0; i < 32; ++i)for (int j = 0; j < 4; ++j)dest[i * 4 + j] = (src[i] >> (j * 2)) & 0b11;
+	return dest[0];
+}
+
+int unpack_simd(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&dest) {
+
+	for (int half = 0; half < 32; half += 16) {
+
+		const __m256i src_ymm = _mm256_broadcastsi128_si256(_mm_loadu_si128((__m128i *)&src[half]));
+		{
+			__m256i answer = _mm256_setzero_si256();
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x80808004, 0x80808004, 0x80808004, 0x80808004, 0x80808000, 0x80808000, 0x80808000, 0x80808000));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x80808005, 0x80808005, 0x80808005, 0x80808005, 0x80808001, 0x80808001, 0x80808001, 0x80808001));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x80808006, 0x80808006, 0x80808006, 0x80808006, 0x80808002, 0x80808002, 0x80808002, 0x80808002));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x80808007, 0x80808007, 0x80808007, 0x80808007, 0x80808003, 0x80808003, 0x80808003, 0x80808003));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			_mm256_storeu_si256((__m256i *)&dest[half * 4], answer);
+		}
+		{
+			__m256i answer = _mm256_setzero_si256();
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x8080800C, 0x8080800C, 0x8080800C, 0x8080800C, 0x80808008, 0x80808008, 0x80808008, 0x80808008));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x8080800D, 0x8080800D, 0x8080800D, 0x8080800D, 0x80808009, 0x80808009, 0x80808009, 0x80808009));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x8080800E, 0x8080800E, 0x8080800E, 0x8080800E, 0x8080800A, 0x8080800A, 0x8080800A, 0x8080800A));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			{
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, _mm256_set_epi32(0x8080800F, 0x8080800F, 0x8080800F, 0x8080800F, 0x8080800B, 0x8080800B, 0x8080800B, 0x8080800B));
+				const __m256i a1 = _mm256_srlv_epi32(a0, _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0));
+				const __m256i a2 = _mm256_and_si256(a1, _mm256_set1_epi32(0b11));
+				const __m256i a3 = _mm256_shuffle_epi8(a2, _mm256_set_epi32(0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080));
+				answer = _mm256_or_si256(answer, a3);
+			}
+			_mm256_storeu_si256((__m256i *)&dest[half * 4 + 32], answer);
+		}
+	}
+	return dest[0];
+}
+int unpack_simd2(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&dest) {
+
+	const __m256i shifter = _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0);
+	const __m256i bitmask = _mm256_set1_epi32(0b11);
+	const __m256i before_shuffle_shifter = _mm256_set1_epi32(1);
+	const __m256i meta_after_shuffle_mask = _mm256_set_epi32(0x0B0A0908, 0x07060504, 0x03020100, 0x0F0E0D0C, 0x0B0A0908, 0x07060504, 0x03020100, 0x0F0E0D0C);
+
+	for (int half = 0; half < 32; half += 16) {
+
+		const __m256i src_ymm = _mm256_broadcastsi128_si256(_mm_loadu_si128((__m128i *)&src[half]));
+		{
+			__m256i answer = _mm256_setzero_si256();
+			__m256i before_shuffle_mask = _mm256_set_epi32(0x80808004, 0x80808004, 0x80808004, 0x80808004, 0x80808000, 0x80808000, 0x80808000, 0x80808000);
+			__m256i after_shuffle_mask = _mm256_set_epi32(0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400);
+			for (int i = 0; i < 4; ++i) {
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, before_shuffle_mask);
+				const __m256i a1 = _mm256_srlv_epi32(a0, shifter);
+				const __m256i a2 = _mm256_and_si256(a1, bitmask);
+				const __m256i a3 = _mm256_shuffle_epi8(a2, after_shuffle_mask);
+				answer = _mm256_or_si256(answer, a3);
+				before_shuffle_mask = _mm256_add_epi32(before_shuffle_mask, before_shuffle_shifter);
+				after_shuffle_mask = _mm256_shuffle_epi8(after_shuffle_mask, meta_after_shuffle_mask);
+			}
+			_mm256_storeu_si256((__m256i *)&dest[half * 4], answer);
+		}
+		{
+			__m256i answer = _mm256_setzero_si256();
+			__m256i before_shuffle_mask = _mm256_set_epi32(0x8080800C, 0x8080800C, 0x8080800C, 0x8080800C, 0x80808008, 0x80808008, 0x80808008, 0x80808008);
+			__m256i after_shuffle_mask = _mm256_set_epi32(0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400);
+			for (int i = 0; i < 4; ++i) {
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, before_shuffle_mask);
+				const __m256i a1 = _mm256_srlv_epi32(a0, shifter);
+				const __m256i a2 = _mm256_and_si256(a1, bitmask);
+				const __m256i a3 = _mm256_shuffle_epi8(a2, after_shuffle_mask);
+				answer = _mm256_or_si256(answer, a3);
+				before_shuffle_mask = _mm256_add_epi32(before_shuffle_mask, before_shuffle_shifter);
+				after_shuffle_mask = _mm256_shuffle_epi8(after_shuffle_mask, meta_after_shuffle_mask);
+			}
+			_mm256_storeu_si256((__m256i *)&dest[half * 4 + 32], answer);
+		}
+	}
+	return dest[0];
+}
+int unpack_simd3(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&dest) {
+
+	const __m256i shifter = _mm256_set_epi32(6, 4, 2, 0, 6, 4, 2, 0);
+	const __m256i bitmask = _mm256_set1_epi32(0b11);
+	const __m256i before_shuffle_shifter = _mm256_set1_epi32(1);
+	const __m256i meta_after_shuffle_mask = _mm256_set_epi32(0x0B0A0908, 0x07060504, 0x03020100, 0x0F0E0D0C, 0x0B0A0908, 0x07060504, 0x03020100, 0x0F0E0D0C);
+
+	for (int half = 0; half < 32; half += 16) {
+
+		const __m256i src_ymm = _mm256_broadcastsi128_si256(_mm_loadu_si128((__m128i *)&src[half]));
+		{
+			__m256i answer1 = _mm256_setzero_si256();
+			__m256i answer2 = _mm256_setzero_si256();
+			__m256i before_shuffle_mask1 = _mm256_set_epi32(0x80808004, 0x80808004, 0x80808004, 0x80808004, 0x80808000, 0x80808000, 0x80808000, 0x80808000);
+			__m256i before_shuffle_mask2 = _mm256_set_epi32(0x8080800C, 0x8080800C, 0x8080800C, 0x8080800C, 0x80808008, 0x80808008, 0x80808008, 0x80808008);
+			__m256i after_shuffle_mask = _mm256_set_epi32(0x80808080, 0x80808080, 0x80808080, 0x0C080400, 0x80808080, 0x80808080, 0x80808080, 0x0C080400);
+			for (int i = 0; i < 4; ++i) {
+				const __m256i a0 = _mm256_shuffle_epi8(src_ymm, before_shuffle_mask1);
+				const __m256i b0 = _mm256_shuffle_epi8(src_ymm, before_shuffle_mask2);
+				const __m256i a1 = _mm256_srlv_epi32(a0, shifter);
+				const __m256i b1 = _mm256_srlv_epi32(b0, shifter);
+				const __m256i a2 = _mm256_and_si256(a1, bitmask);
+				const __m256i b2 = _mm256_and_si256(b1, bitmask);
+				const __m256i a3 = _mm256_shuffle_epi8(a2, after_shuffle_mask);
+				const __m256i b3 = _mm256_shuffle_epi8(b2, after_shuffle_mask);
+				answer1 = _mm256_or_si256(answer1, a3);
+				answer2 = _mm256_or_si256(answer2, b3);
+				before_shuffle_mask1 = _mm256_add_epi32(before_shuffle_mask1, before_shuffle_shifter);
+				before_shuffle_mask2 = _mm256_add_epi32(before_shuffle_mask2, before_shuffle_shifter);
+				after_shuffle_mask = _mm256_shuffle_epi8(after_shuffle_mask, meta_after_shuffle_mask);
+			}
+			_mm256_storeu_si256((__m256i *)&dest[half * 4], answer1);
+			_mm256_storeu_si256((__m256i *)&dest[half * 4 + 32], answer2);
+		}
+	}
+	return dest[0];
+}
+
+void TestUnpack() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dist(0, 255);
+
+	for (int iteration = 0; iteration < 10000000; iteration++) {
+		std::cout << iteration << std::endl;
+		std::array<uint8_t, 32>a;
+		for (int i = 0; i < 32; ++i)a[i] = dist(rnd);
+		std::array<uint8_t, 128>b1 = std::array<uint8_t, 128>();
+		std::array<uint8_t, 128>b2 = std::array<uint8_t, 128>();
+		std::array<uint8_t, 128>b3 = std::array<uint8_t, 128>();
+		std::array<uint8_t, 128>b4 = std::array<uint8_t, 128>();
+
+		unpack(a, b1);
+		unpack_simd(a, b2);
+		unpack_simd2(a, b3);
+		unpack_simd2(a, b4);
+		for (int i = 0; i < 128; ++i)assert(b1[i] == b2[i]);
+		for (int i = 0; i < 128; ++i)assert(b1[i] == b3[i]);
+		for (int i = 0; i < 128; ++i)assert(b1[i] == b4[i]);
+	}
+	return;
+}
+
+void speedtestunpack() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dist(0, 255);
+	std::array<uint8_t, 32>a;
+	for (int i = 0; i < 32; ++i)a[i] = dist(rnd);
+	std::array<uint8_t, 128>b = std::array<uint8_t, 128>();
+
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 10000000; ++iteration) {
+			volatile int score = unpack(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "normal version: " << elapsed << " ms / 10M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 100000000; ++iteration) {
+			volatile int score = unpack_simd(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd version: " << elapsed << " ms / 100M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 100000000; ++iteration) {
+			volatile int score = unpack_simd2(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd2 version: " << elapsed << " ms / 100M" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 100000000; ++iteration) {
+			volatile int score = unpack_simd3(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "simd3 version: " << elapsed << " ms / 100M" << std::endl;
+	}
+}
 
 void TestSimdSmithWaterman() {
 	std::mt19937_64 rnd(10000);
@@ -1753,7 +1979,6 @@ void InfinitySW111x32() {
 	return;
 }
 
-
 void speedtest111x32() {
 	std::mt19937_64 rnd(10000);
 	std::uniform_int_distribution<int> dna(0, 3);
@@ -1840,17 +2065,21 @@ void speedtest111x32() {
 	return;
 }
 
-
 int main(void) {
+
+	//TestUnpack();
+	speedtestunpack();
+	speedtestunpack();
+	speedtestunpack();
 
 	//TestSimdSmithWaterman111x32();
 	//TestSimdSmithWaterman111();
 	//TestSimdSmithWaterman();
 	//InfinitySW111x32();
 	//InfinitySW();
-	speedtest111x32();
-	speedtest111x32();
-	speedtest111x32();
+	//speedtest111x32();
+	//speedtest111x32();
+	//speedtest111x32();
 	//SpeedTest();
 	//SpeedTest();
 	//SpeedTest();
