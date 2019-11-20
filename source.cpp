@@ -1727,15 +1727,14 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 	//の意味
 
 	//TODO: 16384決め打ちだとデカすぎてコレ自体をテストしにくいので、決め打ちしないようにしよう←ゴリ押せる程度のデカさだった
+	//TODO: 全埋めと座標系が微妙に違ってて気持ち悪いので修正する←した。バグが見つかったので直した
+	//TODO: 似ている配列に関して全埋めとスコアが一致することを確認する←した
 
-	//TODO: 全埋めと座標系が微妙に違ってて気持ち悪いので修正する
-
-	//TODO: 似ている配列に関して全埋めとスコアが一致することを確認する
 	//TODO: トレースバックを実装する
 	//TODO: 似ている配列に関して全埋めとトレースバック結果が一致することを確認する
 
 
-	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 70;
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
 
 	std::map<int64_t, int>dp;
@@ -1757,7 +1756,7 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 	int max_pos_y = 0, max_pos_x = 0, max_score = 0;
 
 	//最初に左上の三角形部分を埋める。
-	for (int y = 0; y < 32; ++y)for (int x = 0; x < 32 - y; ++x) {
+	for (int y = 0; y < BANDWIDTH; ++y)for (int x = 0; x < BANDWIDTH - y; ++x) {
 		if (y == 0 && x == 0) {
 			Set(0, 0, 0);
 			continue;
@@ -1774,26 +1773,26 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 		}
 	}
 
-	//この時点で、(0,31)～(31,0)までの斜め区間の32要素と、そこから左上の区間が求まっている。
+	//この時点で、(0,BANDWIDTH-1)～(BANDWIDTH-1,0)までの斜め区間のBANDWIDTH要素と、そこから左上の区間が求まっている。
 	//以降の繰り返し手順は、
 	//(1)下に行くか右に行くか決める
-	//(2)決めた方向の32要素を計算する
+	//(2)決めた方向のBANDWIDTH要素を計算する
 	//で、この他にX-dropの打ち切り基準の計算とかもある。
 
-	for (int y_now = 0, x_now = 31, center_max_score = Get(y_now + 16, x_now - 16); y_now <= 16384 + 32 && x_now <= 16384 + 32;) {
+	for (int y_now = 0, x_now = (BANDWIDTH - 1), center_max_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2)); y_now <= 16384 + BANDWIDTH && x_now <= 16384 + BANDWIDTH;) {
 
 		//X-drop
-		const int center_now_score = Get(y_now + 16, x_now - 16);
+		const int center_now_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2));
 		if (center_now_score + X_THRESHOLD < center_max_score) {
 			break;
 		}
 		else if (center_max_score < center_now_score)center_max_score = center_now_score;
 
 		const int now_upperleft_score = Get(y_now, x_now);
-		const int now_lowerright_score = Get(y_now + 31, x_now - 31);
+		const int now_lowerright_score = Get(y_now + (BANDWIDTH - 1), x_now - (BANDWIDTH - 1));
 		if (now_upperleft_score < now_lowerright_score) {
 			//下に行く
-			for (int i = 0; i < 32; ++i) {
+			for (int i = 0; i < BANDWIDTH; ++i) {
 				const int y_next = y_now + i + 1;
 				const int x_next = x_now - i;
 				int score = minus_inf;
@@ -1811,7 +1810,7 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 		}
 		else {
 			//右に行く
-			for (int i = 0; i < 32; ++i) {
+			for (int i = 0; i < BANDWIDTH; ++i) {
 				const int y_next = y_now + i;
 				const int x_next = x_now - i + 1;
 				int score = minus_inf;
