@@ -1076,6 +1076,38 @@ int SmithWaterman_simd9(
 	return result;
 }
 
+int SmithWaterman_111(
+	const std::array<uint8_t, 128>&obs1,
+	const std::array<uint8_t, 128>&obs2) {
+	//Smith-Waterman, 全埋めDPをやってスコアだけを返す。トレースバックなし
+	//linear gap
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
+
+#define INDEX(ii, jj) ((ii) * 129 + (jj))
+
+	int dp[129 * 129] = {};
+
+	int answer = 0;
+
+	for (int i = 1; i <= 128; ++i) {
+		for (int j = 1; j <= 128; ++j) {
+			const int index = INDEX(i, j);
+			dp[index] = 0;
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
+			answer = std::max<int>(answer, dp[index]);
+			//std::cout << dp[index] << " ";
+		}
+		//std::cout << std::endl;
+	}
+
+#undef INDEX
+
+	return answer;
+}
+
 int SmithWaterman_8bit111simd(
 	const std::array<uint8_t, 128>&obs1,
 	const std::array<uint8_t, 128>&obs2) {
@@ -1653,6 +1685,173 @@ int unpack_simd3(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&des
 	return dest[0];
 }
 
+int SemiGlobal_111(
+	const std::array<uint8_t, 16384>&obs1,
+	const std::array<uint8_t, 16384>&obs2) {
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
+	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
+
+	std::vector<int>dp((16384 + 1) * (16384 + 1), minus_inf);
+	dp[0] = 0;
+
+#define INDEX(ii, jj) ((ii) * (16384 + 1) + (jj))
+
+	int answer = 0;
+
+	for (int i = 0; i <= 16384; ++i) {
+		for (int j = 0; j <= 16384; ++j) {
+			const int index = INDEX(i, j);
+			if(i && j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
+			if(i)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
+			if(j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
+			answer = std::max<int>(answer, dp[index]);
+			//std::cout << dp[index] << " ";
+		}
+		//std::cout << std::endl;
+	}
+
+#undef INDEX
+
+	return answer;
+}
+
+int SemiGlobal_AdaptiveBanded_16kLength_11170(
+	const std::array<uint8_t, 16384>&obs1,
+	const std::array<uint8_t, 16384>&obs2) {
+
+	//SemiGlobalと言ってるのは、
+	//・ゼロとの比較をしない (Global)
+	//・左上端からアライメントがスタートする (Global)
+	//・右下端でアライメントが終わるとは限らない。スコア最大の地点からトレースバックする (Local)
+	//の意味
+
+	//TODO: 16384決め打ちだとデカすぎてコレ自体をテストしにくいので、決め打ちしないようにしよう←ゴリ押せる程度のデカさだった
+
+	//TODO: 全埋めと座標系が微妙に違ってて気持ち悪いので修正する
+
+	//TODO: 似ている配列に関して全埋めとスコアが一致することを確認する
+	//TODO: トレースバックを実装する
+	//TODO: 似ている配列に関して全埋めとトレースバック結果が一致することを確認する
+
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 70;
+	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
+
+	std::map<int64_t, int>dp;
+	const auto Get = [&](const int64_t y, const int64_t x) {
+		assert(-1 <= y && y < 16384 && -1 <= x && x < 16384);
+		if (y < 0 || x < 0)return minus_inf;
+		const int64_t index = (y * 16384) + x;
+		if (dp.find(index) == dp.end())return minus_inf;
+		return dp[index];
+	};
+	const auto Set = [&](const int64_t y, const int64_t x, const int value) {
+		assert(0 <= y && y < 16384 && 0 <= x && x < 16384);
+		dp[(y * 16384) + x] = value;
+	};
+
+	int max_pos_y = 0, max_pos_x = 0, max_score = 0;
+
+	//最初に左上の三角形部分を埋める。
+	for (int y = 0; y < 32; ++y)for (int x = 0; x < y; ++x) {
+		if (y == 0 && x == 0) {
+			Set(0, 0, 0);
+			continue;
+		}
+		int score = minus_inf;
+		score = std::max<int>(score, Get(y - 1, x) - GAP);
+		score = std::max<int>(score, Get(y, x - 1) - GAP);
+		score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y] == obs2[x] ? MATCH : -MISMATCH));
+		Set(y, x, score);
+		if (max_score < score) {
+			max_pos_y = y;
+			max_pos_x = x;
+			max_score = score;
+		}
+	}
+
+	//この時点で、(0,31)～(31,0)までの斜め区間の32要素と、そこから左上の区間が求まっている。
+	//以降の繰り返し手順は、
+	//(1)下に行くか右に行くか決める
+	//(2)決めた方向の32要素を計算する
+	//で、この他にX-dropの打ち切り基準の計算とかもある。
+
+	for (int y_now = 0, x_now = 31, center_max_score = Get(y_now + 16, x_now - 16); 16384 + 31 <= y_now || 16384 + 31 <= x_now || 16384 * 2 - 1 <= y_now + x_now;) {
+
+		//X-drop
+		const int center_now_score = Get(y_now + 16, x_now - 16);
+		if (center_now_score + X_THRESHOLD < center_max_score) {
+			break;
+		}
+		else if (center_max_score < center_now_score)center_max_score = center_now_score;
+
+		const int now_upperleft_score = Get(y_now, x_now);
+		const int now_lowerright_score = Get(y_now + 31, x_now - 31);
+		if (now_upperleft_score < now_lowerright_score) {
+			//下に行く
+			for (int i = 0; i < 32; ++i) {
+				const int y_next = y_now + i + 1;
+				const int x_next = x_now + i;
+				int score = minus_inf;
+				score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
+				score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
+				score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next] == obs2[x_next] ? MATCH : -MISMATCH));
+				Set(y_next, x_next, score);
+				if (max_score < score) {
+					max_pos_y = y_next;
+					max_pos_x = x_next;
+					max_score = score;
+				}
+			}
+			++y_now;
+		}
+		else {
+			//右に行く
+			for (int i = 0; i < 32; ++i) {
+				const int y_next = y_now + i;
+				const int x_next = x_now + i + 1;
+				int score = minus_inf;
+				score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
+				score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
+				score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next] == obs2[x_next] ? MATCH : -MISMATCH));
+				Set(y_next, x_next, score);
+				if (max_score < score) {
+					max_pos_y = y_next;
+					max_pos_x = x_next;
+					max_score = score;
+				}
+			}
+			++x_now;
+		}
+	}
+
+	return max_score;
+}
+
+void TestSemiGlobal() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dna(0, 3);
+	std::uniform_int_distribution<int> dice(0, 19);
+
+	for (int iteration = 0; iteration < 10000000; iteration++) {
+		std::cout << iteration << std::endl;
+		std::array<uint8_t, 16384>a, b;
+		for (int i = 0; i < 16384; ++i) {
+			a[i] = dna(rnd);
+			if(dice(rnd))b[i] = a[i];
+			else b[i] = dna(rnd);
+		}
+
+		const int ans2 = SemiGlobal_AdaptiveBanded_16kLength_11170(a, b);
+		const int ans1 = SemiGlobal_111(a, b);
+		assert(ans1 == ans2);
+	}
+	return;
+
+}
+
+
 void TestUnpack() {
 	std::mt19937_64 rnd(10000);
 	std::uniform_int_distribution<int> dist(0, 255);
@@ -1774,14 +1973,8 @@ void TestSimdSmithWaterman111() {
 			a[i] = dna(rnd);
 			b[i] = dna(rnd);
 		}
-		std::array<int8_t, 16>score_matrix = {
-			1,-1,-1,-1,
-			-1,1,-1,-1,
-			-1,-1,1,-1,
-			-1,-1,-1,1 };
-		uint8_t gap_penalty = 1;
 
-		const int ans1 = SmithWaterman(a, b, score_matrix, gap_penalty);
+		const int ans1 = SmithWaterman_111(a, b);
 		const int ans2 = SmithWaterman_8bit111simd(a, b);
 		assert(ans1 == ans2);
 	}
@@ -1800,16 +1993,11 @@ void TestSimdSmithWaterman111x32() {
 		std::array<int, 32>ref_ans;
 		for (int i = 0; i < 128 * 32; ++i)a[i] = dna(rnd);
 		for (int i = 0; i < 128; ++i)b[i] = dna(rnd);
-		std::array<int8_t, 16>score_matrix = {
-			1,-1,-1,-1,
-			-1,1,-1,-1,
-			-1,-1,1,-1,
-			-1,-1,-1,1 };
-		uint8_t gap_penalty = 1;
+
 		for (int i = 0; i < 32; ++i) {
 			std::array<uint8_t, 128>aa;
 			for (int j = 0; j < 128; ++j)aa[j] = a[i * 128 + j];
-			const int ans1 = SmithWaterman(aa, b, score_matrix, gap_penalty);
+			const int ans1 = SmithWaterman_111(aa, b);
 			ref_ans[i] = ans1;
 		}
 		const int ans2 = SmithWaterman_8b111x32mark1(a, b, dest);
@@ -2067,10 +2255,12 @@ void speedtest111x32() {
 
 int main(void) {
 
+	TestSemiGlobal();
+
 	//TestUnpack();
-	speedtestunpack();
-	speedtestunpack();
-	speedtestunpack();
+	//speedtestunpack();
+	//speedtestunpack();
+	//speedtestunpack();
 
 	//TestSimdSmithWaterman111x32();
 	//TestSimdSmithWaterman111();
