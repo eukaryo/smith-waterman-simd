@@ -1685,7 +1685,7 @@ int unpack_simd3(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&des
 	return dest[0];
 }
 
-int SemiGlobal_111(
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
 
@@ -1697,7 +1697,7 @@ int SemiGlobal_111(
 
 #define INDEX(ii, jj) ((ii) * (16384 + 1) + (jj))
 
-	int answer = 0;
+	int max_score = 0, max_i = 0, max_j = 0;
 
 	for (int i = 0; i <= 16384; ++i) {
 		for (int j = 0; j <= 16384; ++j) {
@@ -1705,18 +1705,39 @@ int SemiGlobal_111(
 			if (i && j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
 			if (i)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
 			if (j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
-			answer = std::max<int>(answer, dp[index]);
-			//std::cout << dp[index] << " ";
+			if (max_score < dp[index]) {
+				max_score = dp[index];
+				max_i = i;
+				max_j = j;
+			}
 		}
-		//std::cout << std::endl;
+	}
+
+	std::vector<std::pair<int, int>>traceback;
+	traceback.push_back(std::make_pair(max_i, max_j));
+	for (int i = max_i, j = max_j; i || j;) {
+		const int index = INDEX(i, j);
+		if (i && j && dp[index] == dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH)) {
+			--i;
+			--j;
+		}
+		else if (i && dp[index] == dp[INDEX(i - 1, j - 0)] - GAP) {
+			--i;
+		}
+		else if (j && dp[index] == dp[INDEX(i - 0, j - 1)] - GAP) {
+			--j;
+		}
+		else assert(0);
+		traceback.push_back(std::make_pair(i, j));
 	}
 
 #undef INDEX
 
-	return answer;
+	std::reverse(traceback.begin(), traceback.end());
+	return std::make_pair(max_score, traceback);
 }
 
-int SemiGlobal_AdaptiveBanded_16kLength_11170(
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_32_70(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
 
@@ -1726,31 +1747,22 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 	//・右下端でアライメントが終わるとは限らない。スコア最大の地点からトレースバックする (Local)
 	//の意味
 
-	//TODO: 16384決め打ちだとデカすぎてコレ自体をテストしにくいので、決め打ちしないようにしよう←ゴリ押せる程度のデカさだった
-	//TODO: 全埋めと座標系が微妙に違ってて気持ち悪いので修正する←した。バグが見つかったので直した
-	//TODO: 似ている配列に関して全埋めとスコアが一致することを確認する←した
-
-	//TODO: トレースバックを実装する
-	//TODO: 似ている配列に関して全埋めとトレースバック結果が一致することを確認する
-
-
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
 
 	std::map<int64_t, int>dp;
 	const auto Get = [&](const int64_t y, const int64_t x) {
-		assert(0 <= y && y < (16384 * 2) && 0 <= x && x < (16384 * 2));
+		assert(0 <= y && y < 16384 * 2 && 0 <= x && x < 16384 * 2);
 		if (y == 0 && x == 0)return 0;
 		if (y == 0)return int(-x * GAP);
 		if (x == 0)return int(-y * GAP);
-
-		const int64_t index = (y * (16384 * 2)) + x;
+		const int64_t index = (y * 16384 * 2) + x;
 		if (dp.find(index) == dp.end())return minus_inf;
 		return dp[index];
 	};
 	const auto Set = [&](const int64_t y, const int64_t x, const int value) {
-		assert(0 <= y && y < (16384 * 2) && 0 <= x && x < (16384 * 2));
-		dp[(y * (16384 * 2)) + x] = value;
+		assert(0 <= y && y < 16384 * 2 && 0 <= x && x < 16384 * 2);
+		dp[(y * 16384 * 2) + x] = value;
 	};
 
 	int max_pos_y = 0, max_pos_x = 0, max_score = 0;
@@ -1762,7 +1774,7 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 			continue;
 		}
 		int score = minus_inf;
-		if (y&&x)score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
+		if (y && x)score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
 		if (y)score = std::max<int>(score, Get(y - 1, x) - GAP);
 		if (x)score = std::max<int>(score, Get(y, x - 1) - GAP);
 		Set(y, x, score);
@@ -1773,13 +1785,13 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 		}
 	}
 
-	//この時点で、(0,BANDWIDTH-1)～(BANDWIDTH-1,0)までの斜め区間のBANDWIDTH要素と、そこから左上の区間が求まっている。
+	//この時点で、(0,BANDWIDTH-1)～(BANDWIDTH-1,0)までの斜め区間と、そこから左上の区間の値が求まっている。
 	//以降の繰り返し手順は、
 	//(1)下に行くか右に行くか決める
-	//(2)決めた方向のBANDWIDTH要素を計算する
+	//(2)決めた方向の32要素を計算する
 	//で、この他にX-dropの打ち切り基準の計算とかもある。
 
-	for (int y_now = 0, x_now = (BANDWIDTH - 1), center_max_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2)); y_now <= 16384 + BANDWIDTH && x_now <= 16384 + BANDWIDTH;) {
+	for (int y_now = 0, x_now = BANDWIDTH - 1, center_max_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2)); y_now <= 16384 + BANDWIDTH && x_now <= 16384 + BANDWIDTH;) {
 
 		//X-drop
 		const int center_now_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2));
@@ -1793,10 +1805,10 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 		if (now_upperleft_score < now_lowerright_score) {
 			//下に行く
 			for (int i = 0; i < BANDWIDTH; ++i) {
-				const int y_next = y_now + i + 1;
-				const int x_next = x_now - i;
+				const int y_next = (y_now + i) + 1;
+				const int x_next = (x_now - i);
 				int score = minus_inf;
-				if (y_next && x_next && y_next <= 16384 && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
+				if (0 < y_next && y_next <= 16384 && 0 < x_next && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
 				if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
 				if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
 				Set(y_next, x_next, score);
@@ -1811,10 +1823,10 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 		else {
 			//右に行く
 			for (int i = 0; i < BANDWIDTH; ++i) {
-				const int y_next = y_now + i;
-				const int x_next = x_now - i + 1;
+				const int y_next = (y_now + i);
+				const int x_next = (x_now - i) + 1;
 				int score = minus_inf;
-				if (y_next && x_next && y_next <= 16384 && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
+				if (0 < y_next && y_next <= 16384 && 0 < x_next && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
 				if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
 				if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
 				Set(y_next, x_next, score);
@@ -1828,8 +1840,104 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 		}
 	}
 
-	return max_score;
+	std::vector<std::pair<int, int>>traceback;
+	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
+	for (int i = max_pos_y, j = max_pos_x; i || j;) {
+		int score = Get(i, j);
+		if (i && j && score == Get(i - 1, j - 1) + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH)) {
+			--i;
+			--j;
+		}
+		else if (i && score == Get(i - 1, j - 0) - GAP) {
+			--i;
+		}
+		else if (j && score == Get(i - 0, j - 1) - GAP) {
+			--j;
+		}
+		else assert(0);
+		traceback.push_back(std::make_pair(i, j));
+	}
+
+	std::reverse(traceback.begin(), traceback.end());
+	return std::make_pair(max_score, traceback);
 }
+
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
+	const std::array<uint8_t, 16384>&obs1,
+	const std::array<uint8_t, 16384>&obs2) {
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 70;
+	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
+
+	std::vector<int>dp((16384 + 1) * (16384 + 1), minus_inf);
+	dp[0] = 0;
+
+#define INDEX(ii, jj) ((ii) * (16384 + 1) + (jj))
+
+	int max_score = 0, max_y = 0, max_x = 0;
+
+	for (int front = 1; front < (16384 + 1) * 2 - 1; ++front) {
+		int front_max_score = minus_inf, front_max_y = 0, front_max_x = 0;
+		for (int y = (front < (16384 + 1)) ? 0 : (front - ((16384 + 1) - 1)), x = (front < (16384 + 1)) ? front : ((16384 + 1) - 1); y <= 16384 && 0 <= x; ++y, --x) {
+			const int index = INDEX(y, x);
+			if (y && x)dp[index] = std::max<int>(dp[index], dp[INDEX(y - 1, x - 1)] + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
+			if (y)dp[index] = std::max<int>(dp[index], dp[INDEX(y - 1, x - 0)] - GAP);
+			if (x)dp[index] = std::max<int>(dp[index], dp[INDEX(y - 0, x - 1)] - GAP);
+			if (front_max_score < dp[index]) {
+				front_max_score = dp[index];
+				front_max_y = y;
+				front_max_x = x;
+			}
+			//else if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
+			//↑は、X-dropによって区間が二股にわかれることを許すことを意味する。
+		}
+
+		//↓は、X-dropによって区間が二股にわかれることを許さない（i.e.二股の内側ならばDP値が小さくても計算する）ことを意味する。
+		for (int y = (front < (16384 + 1)) ? 0 : (front - ((16384 + 1) - 1)), x = (front < (16384 + 1)) ? front : ((16384 + 1) - 1); y <= 16384 && 0 <= x; ++y, --x) {
+			const int index = INDEX(y, x);
+			if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
+			else break;
+		}
+		for (int y = (front < (16384 + 1)) ? front : ((16384 + 1) - 1), x = (front < (16384 + 1)) ? 0 : (front - ((16384 + 1) - 1)); 0 <= y && x <= 16384; --y, ++x) {
+			const int index = INDEX(y, x);
+			if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
+			else break;
+		}
+		if (front_max_score + X_THRESHOLD < max_score)break;
+
+		if (max_score < front_max_score) {
+			max_score = front_max_score;
+			max_y = front_max_y;
+			max_x = front_max_x;
+		}
+	}
+
+	std::vector<std::pair<int, int>>traceback;
+	traceback.push_back(std::make_pair(max_y, max_x));
+	for (int y = max_y, x = max_x; y || x;) {
+		const int index = INDEX(y, x);
+		if (y && x && dp[index] == dp[INDEX(y - 1, x - 1)] + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH)) {
+			--y;
+			--x;
+		}
+		else if (y && dp[index] == dp[INDEX(y - 1, x - 0)] - GAP) {
+			--y;
+		}
+		else if (x && dp[index] == dp[INDEX(y - 0, x - 1)] - GAP) {
+			--x;
+		}
+		else assert(0);
+		traceback.push_back(std::make_pair(y, x));
+	}
+
+#undef INDEX
+
+	std::reverse(traceback.begin(), traceback.end());
+	return std::make_pair(max_score, traceback);
+}
+
+
+
 
 void TestSemiGlobal() {
 	std::mt19937_64 rnd(10000);
@@ -1845,13 +1953,11 @@ void TestSemiGlobal() {
 			else b[i] = dna(rnd);
 		}
 
-		const int ans2 = SemiGlobal_AdaptiveBanded_16kLength_11170(a, b);
-		const int ans1 = SemiGlobal_111(a, b);
-
-		std::cout << "ans1 = " << ans1 << std::endl;
-		std::cout << "ans2 = " << ans2 << std::endl;
-
+		const auto ans1 = SemiGlobal_111(a, b);
+		const auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+		const auto ans3 = SemiGlobal_XDrop_111_70(a, b);
 		assert(ans1 == ans2);
+		assert(ans1 == ans3);
 	}
 	return;
 
