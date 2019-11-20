@@ -1702,9 +1702,9 @@ int SemiGlobal_111(
 	for (int i = 0; i <= 16384; ++i) {
 		for (int j = 0; j <= 16384; ++j) {
 			const int index = INDEX(i, j);
-			if(i && j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
-			if(i)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
-			if(j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
+			if (i && j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
+			if (i)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
+			if (j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
 			answer = std::max<int>(answer, dp[index]);
 			//std::cout << dp[index] << " ";
 		}
@@ -1740,29 +1740,32 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 
 	std::map<int64_t, int>dp;
 	const auto Get = [&](const int64_t y, const int64_t x) {
-		assert(-1 <= y && y < 16384 && -1 <= x && x < 16384);
-		if (y < 0 || x < 0)return minus_inf;
-		const int64_t index = (y * 16384) + x;
+		assert(0 <= y && y < (16384 * 2) && 0 <= x && x < (16384 * 2));
+		if (y == 0 && x == 0)return 0;
+		if (y == 0)return int(-x * GAP);
+		if (x == 0)return int(-y * GAP);
+
+		const int64_t index = (y * (16384 * 2)) + x;
 		if (dp.find(index) == dp.end())return minus_inf;
 		return dp[index];
 	};
 	const auto Set = [&](const int64_t y, const int64_t x, const int value) {
-		assert(0 <= y && y < 16384 && 0 <= x && x < 16384);
-		dp[(y * 16384) + x] = value;
+		assert(0 <= y && y < (16384 * 2) && 0 <= x && x < (16384 * 2));
+		dp[(y * (16384 * 2)) + x] = value;
 	};
 
 	int max_pos_y = 0, max_pos_x = 0, max_score = 0;
 
 	//最初に左上の三角形部分を埋める。
-	for (int y = 0; y < 32; ++y)for (int x = 0; x < y; ++x) {
+	for (int y = 0; y < 32; ++y)for (int x = 0; x < 32 - y; ++x) {
 		if (y == 0 && x == 0) {
 			Set(0, 0, 0);
 			continue;
 		}
 		int score = minus_inf;
-		score = std::max<int>(score, Get(y - 1, x) - GAP);
-		score = std::max<int>(score, Get(y, x - 1) - GAP);
-		score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y] == obs2[x] ? MATCH : -MISMATCH));
+		if (y&&x)score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
+		if (y)score = std::max<int>(score, Get(y - 1, x) - GAP);
+		if (x)score = std::max<int>(score, Get(y, x - 1) - GAP);
 		Set(y, x, score);
 		if (max_score < score) {
 			max_pos_y = y;
@@ -1777,7 +1780,7 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 	//(2)決めた方向の32要素を計算する
 	//で、この他にX-dropの打ち切り基準の計算とかもある。
 
-	for (int y_now = 0, x_now = 31, center_max_score = Get(y_now + 16, x_now - 16); 16384 + 31 <= y_now || 16384 + 31 <= x_now || 16384 * 2 - 1 <= y_now + x_now;) {
+	for (int y_now = 0, x_now = 31, center_max_score = Get(y_now + 16, x_now - 16); y_now <= 16384 + 32 && x_now <= 16384 + 32;) {
 
 		//X-drop
 		const int center_now_score = Get(y_now + 16, x_now - 16);
@@ -1792,11 +1795,11 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 			//下に行く
 			for (int i = 0; i < 32; ++i) {
 				const int y_next = y_now + i + 1;
-				const int x_next = x_now + i;
+				const int x_next = x_now - i;
 				int score = minus_inf;
-				score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
-				score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
-				score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next] == obs2[x_next] ? MATCH : -MISMATCH));
+				if (y_next && x_next && y_next <= 16384 && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
+				if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
+				if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
 				Set(y_next, x_next, score);
 				if (max_score < score) {
 					max_pos_y = y_next;
@@ -1810,11 +1813,11 @@ int SemiGlobal_AdaptiveBanded_16kLength_11170(
 			//右に行く
 			for (int i = 0; i < 32; ++i) {
 				const int y_next = y_now + i;
-				const int x_next = x_now + i + 1;
+				const int x_next = x_now - i + 1;
 				int score = minus_inf;
-				score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
-				score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
-				score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next] == obs2[x_next] ? MATCH : -MISMATCH));
+				if (y_next && x_next && y_next <= 16384 && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
+				if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
+				if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
 				Set(y_next, x_next, score);
 				if (max_score < score) {
 					max_pos_y = y_next;
@@ -1839,12 +1842,16 @@ void TestSemiGlobal() {
 		std::array<uint8_t, 16384>a, b;
 		for (int i = 0; i < 16384; ++i) {
 			a[i] = dna(rnd);
-			if(dice(rnd))b[i] = a[i];
+			if (dice(rnd))b[i] = a[i];
 			else b[i] = dna(rnd);
 		}
 
 		const int ans2 = SemiGlobal_AdaptiveBanded_16kLength_11170(a, b);
 		const int ans1 = SemiGlobal_111(a, b);
+
+		std::cout << "ans1 = " << ans1 << std::endl;
+		std::cout << "ans2 = " << ans2 << std::endl;
+
 		assert(ans1 == ans2);
 	}
 	return;
