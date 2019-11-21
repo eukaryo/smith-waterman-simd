@@ -1800,43 +1800,30 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_3
 		}
 		else if (center_max_score < center_now_score)center_max_score = center_now_score;
 
+		//下に行くか右に行くか決める
 		const int now_upperleft_score = Get(y_now, x_now);
 		const int now_lowerright_score = Get(y_now + (BANDWIDTH - 1), x_now - (BANDWIDTH - 1));
 		if (now_upperleft_score < now_lowerright_score) {
-			//下に行く
-			for (int i = 0; i < BANDWIDTH; ++i) {
-				const int y_next = (y_now + i) + 1;
-				const int x_next = (x_now - i);
-				int score = minus_inf;
-				if (0 < y_next && y_next <= 16384 && 0 < x_next && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
-				if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
-				if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
-				Set(y_next, x_next, score);
-				if (max_score < score) {
-					max_pos_y = y_next;
-					max_pos_x = x_next;
-					max_score = score;
-				}
-			}
 			++y_now;
 		}
 		else {
-			//右に行く
-			for (int i = 0; i < BANDWIDTH; ++i) {
-				const int y_next = (y_now + i);
-				const int x_next = (x_now - i) + 1;
-				int score = minus_inf;
-				if (0 < y_next && y_next <= 16384 && 0 < x_next && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
-				if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
-				if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
-				Set(y_next, x_next, score);
-				if (max_score < score) {
-					max_pos_y = y_next;
-					max_pos_x = x_next;
-					max_score = score;
-				}
-			}
 			++x_now;
+		}
+
+		//次の区間を計算
+		for (int i = 0; i < BANDWIDTH; ++i) {
+			const int y_next = y_now + i;
+			const int x_next = x_now - i;
+			int score = minus_inf;
+			if (0 < y_next && y_next <= 16384 && 0 < x_next && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
+			if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
+			if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
+			Set(y_next, x_next, score);
+			if (max_score < score) {
+				max_pos_y = y_next;
+				max_pos_x = x_next;
+				max_score = score;
+			}
 		}
 	}
 
@@ -1866,7 +1853,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
 
-	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 70;
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 20;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
 
 	std::vector<int>dp((16384 + 1) * (16384 + 1), minus_inf);
