@@ -1853,7 +1853,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
 
-	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 20;
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 70;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
 
 	std::vector<int>dp((16384 + 1) * (16384 + 1), minus_inf);
@@ -1863,9 +1863,12 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 
 	int max_score = 0, max_y = 0, max_x = 0;
 
+	int now_upperrightmost_y = 0, now_upperrightmost_x = 1, now_lowerleftmost_y = 1, now_lowerleftmost_x = 0;
+
 	for (int front = 1; front < (16384 + 1) * 2 - 1; ++front) {
 		int front_max_score = minus_inf, front_max_y = 0, front_max_x = 0;
-		for (int y = (front < (16384 + 1)) ? 0 : (front - ((16384 + 1) - 1)), x = (front < (16384 + 1)) ? front : ((16384 + 1) - 1); y <= 16384 && 0 <= x; ++y, --x) {
+
+		for (int y = now_upperrightmost_y, x = now_upperrightmost_x; y <= now_lowerleftmost_y && now_lowerleftmost_x <= x; y++, x--) {
 			const int index = INDEX(y, x);
 			if (y && x)dp[index] = std::max<int>(dp[index], dp[INDEX(y - 1, x - 1)] + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
 			if (y)dp[index] = std::max<int>(dp[index], dp[INDEX(y - 1, x - 0)] - GAP);
@@ -1879,23 +1882,34 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 			//↑は、X-dropによって区間が二股にわかれることを許すことを意味する。
 		}
 
-		//↓は、X-dropによって区間が二股にわかれることを許さない（i.e.二股の内側ならばDP値が小さくても計算する）ことを意味する。
-		for (int y = (front < (16384 + 1)) ? 0 : (front - ((16384 + 1) - 1)), x = (front < (16384 + 1)) ? front : ((16384 + 1) - 1); y <= 16384 && 0 <= x; ++y, --x) {
-			const int index = INDEX(y, x);
-			if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
-			else break;
-		}
-		for (int y = (front < (16384 + 1)) ? front : ((16384 + 1) - 1), x = (front < (16384 + 1)) ? 0 : (front - ((16384 + 1) - 1)); 0 <= y && x <= 16384; --y, ++x) {
-			const int index = INDEX(y, x);
-			if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
-			else break;
-		}
 		if (front_max_score + X_THRESHOLD < max_score)break;
+
+		//↓は、X-dropによって区間が二股にわかれることを許さない（i.e.二股の内側ならばDP値が小さくても計算する）ことを意味する。
+		for (; now_upperrightmost_y <= now_lowerleftmost_y && now_lowerleftmost_x <= now_upperrightmost_x; now_upperrightmost_y++, now_upperrightmost_x--) {
+			const int index = INDEX(now_upperrightmost_y, now_upperrightmost_x);
+			if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
+			else break;
+		}
+		for (; now_upperrightmost_y <= now_lowerleftmost_y && now_lowerleftmost_x <= now_upperrightmost_x; now_lowerleftmost_y--, now_lowerleftmost_x++) {
+			const int index = INDEX(now_lowerleftmost_y, now_lowerleftmost_x);
+			if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
+			else break;
+		}
+		assert(now_upperrightmost_y <= now_lowerleftmost_y
+			&& now_lowerleftmost_x <= now_upperrightmost_x);
 
 		if (max_score < front_max_score) {
 			max_score = front_max_score;
 			max_y = front_max_y;
 			max_x = front_max_x;
+		}
+		if (16384 < ++now_upperrightmost_x) {
+			--now_upperrightmost_x;
+			++now_upperrightmost_y;
+		}
+		if (16384 < ++now_lowerleftmost_y) {
+			++now_lowerleftmost_x;
+			--now_lowerleftmost_y;
 		}
 	}
 
@@ -1923,9 +1937,6 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 	return std::make_pair(max_score, traceback);
 }
 
-
-
-
 void TestSemiGlobal() {
 	std::mt19937_64 rnd(10000);
 	std::uniform_int_distribution<int> dna(0, 3);
@@ -1940,16 +1951,19 @@ void TestSemiGlobal() {
 			else b[i] = dna(rnd);
 		}
 
+		std::cout << "step 1" << std::endl;
 		const auto ans1 = SemiGlobal_111(a, b);
+		std::cout << "step 2" << std::endl;
 		const auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+		std::cout << "step 3" << std::endl;
 		const auto ans3 = SemiGlobal_XDrop_111_70(a, b);
+		std::cout << "step 4" << std::endl;
 		assert(ans1 == ans2);
 		assert(ans1 == ans3);
 	}
 	return;
 
 }
-
 
 void TestUnpack() {
 	std::mt19937_64 rnd(10000);
