@@ -1750,80 +1750,123 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_3
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
 
-	std::map<int64_t, int>dp;
+	std::vector<int>dp(32 * ((16384 + 1) * 2 - 1), minus_inf);
+	std::vector<int>dp_upperrightmost_y((16384 + 1) * 2 - 1);
+
 	const auto Get = [&](const int64_t y, const int64_t x) {
-		assert(0 <= y && y < 16384 * 2 && 0 <= x && x < 16384 * 2);
-		if (y == 0 && x == 0)return 0;
-		if (y == 0)return int(-x * GAP);
-		if (x == 0)return int(-y * GAP);
-		const int64_t index = (y * 16384 * 2) + x;
-		if (dp.find(index) == dp.end())return minus_inf;
-		return dp[index];
+		if (y < 0 || 16384 < y || x < 0 || 16384 < x)return minus_inf;
+		const int dist = y + x;
+		const int offset = y - dp_upperrightmost_y[dist];
+		if (offset < 0 || 32 <= offset)return minus_inf;
+		return dp[32 * dist + offset];
 	};
 	const auto Set = [&](const int64_t y, const int64_t x, const int value) {
-		assert(0 <= y && y < 16384 * 2 && 0 <= x && x < 16384 * 2);
-		dp[(y * 16384 * 2) + x] = value;
+		if (y < 0 || 16384 < y || x < 0 || 16384 < x)return;
+		const int dist = y + x;
+		const int offset = y - dp_upperrightmost_y[dist];
+		if (offset < 0 || 32 <= offset)return;
+		dp[32 * dist + offset] = value;
 	};
 
 	int max_pos_y = 0, max_pos_x = 0, max_score = 0;
 
-	//最初に左上の三角形部分を埋める。
-	for (int y = 0; y < BANDWIDTH; ++y)for (int x = 0; x < BANDWIDTH - y; ++x) {
-		if (y == 0 && x == 0) {
-			Set(0, 0, 0);
-			continue;
-		}
-		int score = minus_inf;
-		if (y && x)score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
-		if (y)score = std::max<int>(score, Get(y - 1, x) - GAP);
-		if (x)score = std::max<int>(score, Get(y, x - 1) - GAP);
-		Set(y, x, score);
-		if (max_score < score) {
-			max_pos_y = y;
-			max_pos_x = x;
-			max_score = score;
-		}
-	}
+	dp[0] = 0;
+	dp_upperrightmost_y[0] = 0;
+	int now_upperrightmost_y = 0, now_upperrightmost_x = 0, now_lowerleftmost_y = 0, now_lowerleftmost_x = 0;
+	for (int front = 1; front < (16384 + 1) * 2 - 1; ++front) {
 
-	//この時点で、(0,BANDWIDTH-1)～(BANDWIDTH-1,0)までの斜め区間と、そこから左上の区間の値が求まっている。
-	//以降の繰り返し手順は、
-	//(1)下に行くか右に行くか決める
-	//(2)決めた方向の32要素を計算する
-	//で、この他にX-dropの打ち切り基準の計算とかもある。
+		//前回の計算範囲がBANDWIDTH未満なら、右と下に行く
+		if (now_lowerleftmost_y - now_upperrightmost_y < BANDWIDTH) {
+			++now_upperrightmost_x;
+			++now_lowerleftmost_y;
 
-	for (int y_now = 0, x_now = BANDWIDTH - 1, center_max_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2)); y_now <= 16384 + BANDWIDTH && x_now <= 16384 + BANDWIDTH;) {
-
-		//X-drop
-		const int center_now_score = Get(y_now + (BANDWIDTH / 2), x_now - (BANDWIDTH / 2));
-		if (center_now_score + X_THRESHOLD < center_max_score) {
-			break;
-		}
-		else if (center_max_score < center_now_score)center_max_score = center_now_score;
-
-		//下に行くか右に行くか決める
-		const int now_upperleft_score = Get(y_now, x_now);
-		const int now_lowerright_score = Get(y_now + (BANDWIDTH - 1), x_now - (BANDWIDTH - 1));
-		if (now_upperleft_score < now_lowerright_score) {
-			++y_now;
+			//上で求めた今回の計算範囲がはみ出すなら戻す
+			if (16384 < now_upperrightmost_x) {
+				--now_upperrightmost_x;
+				++now_upperrightmost_y;
+			}
+			if (16384 < now_lowerleftmost_y) {
+				++now_lowerleftmost_x;
+				--now_lowerleftmost_y;
+			}
 		}
 		else {
-			++x_now;
+			//次右に行くか下に行くか決める
+			const int downward_factor = Get(now_lowerleftmost_y, now_lowerleftmost_x);
+			const int rightward_factor = Get(now_upperrightmost_y, now_upperrightmost_x);
+			if (downward_factor <= rightward_factor) {
+				if (now_upperrightmost_x < 16384) {
+					//右に行けるなら右に行く
+					++now_upperrightmost_x;
+					++now_lowerleftmost_x;
+				}
+				else if (16384 < now_lowerleftmost_y) {
+					//右に行けないが下に行けるなら下に行く
+					++now_upperrightmost_y;
+					++now_lowerleftmost_y;
+				}
+				else {
+					//右と下どちらに行ってもはみ出すなら縮める
+					++now_upperrightmost_y;
+					++now_lowerleftmost_x;
+				}
+			}
+			else {
+				if (16384 < now_lowerleftmost_y) {
+					//下に行けるなら下に行く
+					++now_upperrightmost_y;
+					++now_lowerleftmost_y;
+				}
+				else if (now_upperrightmost_x < 16384) {
+					//下に行けないが右に行けるなら右に行く
+					++now_upperrightmost_x;
+					++now_lowerleftmost_x;
+				}
+				else {
+					//右と下どちらに行ってもはみ出すなら縮める
+					++now_upperrightmost_y;
+					++now_lowerleftmost_x;
+				}
+			}
 		}
 
+		dp_upperrightmost_y[front] = now_upperrightmost_y;
+
 		//次の区間を計算
-		for (int i = 0; i < BANDWIDTH; ++i) {
-			const int y_next = y_now + i;
-			const int x_next = x_now - i;
+		int front_max_score = minus_inf, front_max_pos_y = 0, front_max_pos_x = 0;
+		for (int y = now_upperrightmost_y, x = now_upperrightmost_x; y <= now_lowerleftmost_y && now_lowerleftmost_x <= x; y++, x--) {
 			int score = minus_inf;
-			if (0 < y_next && y_next <= 16384 && 0 < x_next && x_next <= 16384)score = std::max<int>(score, Get(y_next - 1, x_next - 1) + (obs1[y_next - 1] == obs2[x_next - 1] ? MATCH : -MISMATCH));
-			if (y_next)score = std::max<int>(score, Get(y_next - 1, x_next) - GAP);
-			if (x_next)score = std::max<int>(score, Get(y_next, x_next - 1) - GAP);
-			Set(y_next, x_next, score);
-			if (max_score < score) {
-				max_pos_y = y_next;
-				max_pos_x = x_next;
-				max_score = score;
+			if (y && x)score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
+			if (y)score = std::max<int>(score, Get(y - 1, x - 0) - GAP);
+			if (x)score = std::max<int>(score, Get(y - 0, x - 1) - GAP);
+			Set(y, x, score);
+			if (front_max_score < score) {
+				front_max_score = score;
+				front_max_pos_y = y;
+				front_max_pos_x = x;
 			}
+			//else if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
+			//↑は、X-dropによって区間が二股にわかれることを許すことを意味する。
+		}
+
+		if (front_max_score + X_THRESHOLD < max_score)break;
+
+		//↓は、X-dropによって区間が二股にわかれることを許さない（i.e.二股の内側ならばDP値が小さくても計算する）ことを意味する。
+		for (; now_upperrightmost_y <= now_lowerleftmost_y && now_lowerleftmost_x <= now_upperrightmost_x; now_upperrightmost_y++, now_upperrightmost_x--) {
+			if (Get(now_upperrightmost_y, now_upperrightmost_x) + X_THRESHOLD < max_score)Set(now_upperrightmost_y, now_upperrightmost_x, minus_inf);
+			else break;
+		}
+		for (; now_upperrightmost_y <= now_lowerleftmost_y && now_lowerleftmost_x <= now_upperrightmost_x; now_lowerleftmost_y--, now_lowerleftmost_x++) {
+			if (Get(now_lowerleftmost_y, now_lowerleftmost_x) + X_THRESHOLD < max_score)Set(now_lowerleftmost_y, now_lowerleftmost_x, minus_inf);
+			else break;
+		}
+		assert(now_upperrightmost_y <= now_lowerleftmost_y
+			&& now_lowerleftmost_x <= now_upperrightmost_x);
+
+		if (max_score < front_max_score) {
+			max_score = front_max_score;
+			max_pos_y = front_max_pos_y;
+			max_pos_x = front_max_pos_x;
 		}
 	}
 
@@ -1903,6 +1946,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 			max_y = front_max_y;
 			max_x = front_max_x;
 		}
+
+
 		if (16384 < ++now_upperrightmost_x) {
 			--now_upperrightmost_x;
 			++now_upperrightmost_y;
@@ -1951,17 +1996,70 @@ void TestSemiGlobal() {
 			else b[i] = dna(rnd);
 		}
 
-		std::cout << "step 1" << std::endl;
 		const auto ans1 = SemiGlobal_111(a, b);
-		std::cout << "step 2" << std::endl;
 		const auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
-		std::cout << "step 3" << std::endl;
-		const auto ans3 = SemiGlobal_XDrop_111_70(a, b);
-		std::cout << "step 4" << std::endl;
+		//const auto ans3 = SemiGlobal_XDrop_111_70(a, b);
 		assert(ans1 == ans2);
-		assert(ans1 == ans3);
+		//assert(ans1 == ans3);
 	}
 	return;
+
+}
+void InfinitySemiGlobal() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dna(0, 3);
+	std::uniform_int_distribution<int> dice(0, 19);
+	std::array<uint8_t, 16384>a, b;
+	for (int i = 0; i < 16384; ++i) {
+		a[i] = dna(rnd);
+		if (dice(rnd))b[i] = a[i];
+		else b[i] = dna(rnd);
+	}
+
+	for (;;) {
+
+		const auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+	}
+	return;
+}
+void SpeedtestSemiGlobal() {
+	std::mt19937_64 rnd(10000);
+	std::uniform_int_distribution<int> dna(0, 3);
+	std::uniform_int_distribution<int> dice(0, 19);
+	std::array<uint8_t, 16384>a, b;
+	for (int i = 0; i < 16384; ++i) {
+		a[i] = dna(rnd);
+		if (dice(rnd))b[i] = a[i];
+		else b[i] = dna(rnd);
+	}
+
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000; ++iteration) {
+			volatile auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "normal version: " << elapsed << " ms / 1K" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000; ++iteration) {
+			volatile auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "normal version: " << elapsed << " ms / 1K" << std::endl;
+	}
+	{
+		auto start = std::chrono::system_clock::now(); // 計測開始時間
+		for (int iteration = 0; iteration < 1000; ++iteration) {
+			volatile auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+		}
+		auto end = std::chrono::system_clock::now();  // 計測終了時間
+		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
+		std::cout << "normal version: " << elapsed << " ms / 1K" << std::endl;
+	}
 
 }
 
@@ -2369,6 +2467,8 @@ void speedtest111x32() {
 int main(void) {
 
 	TestSemiGlobal();
+	InfinitySemiGlobal();
+	SpeedtestSemiGlobal();
 
 	//TestUnpack();
 	//speedtestunpack();
