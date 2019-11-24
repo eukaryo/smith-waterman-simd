@@ -1689,6 +1689,14 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
 
+	//ナイーブな全埋めを実装した。
+
+	//SemiGlobalと言ってるのは、
+	//・ゼロとの比較をしない (Global)
+	//・左上端からアライメントがスタートする (Global)
+	//・右下端でアライメントが終わるとは限らない。スコア最大の地点からトレースバックする (Local)
+	//の意味
+
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
 
@@ -1737,9 +1745,11 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 	return std::make_pair(max_score, traceback);
 }
 
-std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_32_70(
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
+
+	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
 
 	//SemiGlobalと言ってるのは、
 	//・ゼロとの比較をしない (Global)
@@ -1749,6 +1759,13 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_3
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
+
+	const int scorematrix[16] = {
+		MATCH, -MISMATCH, -MISMATCH, -MISMATCH,
+		-MISMATCH, MATCH, -MISMATCH, -MISMATCH,
+		-MISMATCH, -MISMATCH, MATCH, -MISMATCH,
+		-MISMATCH ,-MISMATCH ,-MISMATCH ,MATCH
+	};
 
 	std::vector<int>dp(32 * ((16384 + 1) * 2 - 1), minus_inf);
 	std::vector<int>dp_upperrightmost_y((16384 + 1) * 2 - 1);
@@ -1836,22 +1853,29 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_3
 		int front_max_score = minus_inf, front_max_pos_y = 0, front_max_pos_x = 0;
 		for (int y = now_upperrightmost_y, x = now_upperrightmost_x; y <= now_lowerleftmost_y && now_lowerleftmost_x <= x; y++, x--) {
 			int score = minus_inf;
-			if (y && x)score = std::max<int>(score, Get(y - 1, x - 1) + (obs1[y - 1] == obs2[x - 1] ? MATCH : -MISMATCH));
-			if (y)score = std::max<int>(score, Get(y - 1, x - 0) - GAP);
-			if (x)score = std::max<int>(score, Get(y - 0, x - 1) - GAP);
+			if (y && x)score = std::max<int>(score, Get(y - 1, x - 1) + scorematrix[obs1[y - 1] * 4 + obs2[x - 1]]);
+			score = std::max<int>(score, Get(y - 1, x - 0) - GAP);
+			score = std::max<int>(score, Get(y - 0, x - 1) - GAP);
 			Set(y, x, score);
 			if (front_max_score < score) {
 				front_max_score = score;
 				front_max_pos_y = y;
 				front_max_pos_x = x;
 			}
-			//else if (dp[index] + X_THRESHOLD < max_score)dp[index] = minus_inf;
-			//↑は、X-dropによって区間が二股にわかれることを許すことを意味する。
 		}
 
-		if (front_max_score + X_THRESHOLD < max_score)break;
+		if (front_max_score + X_THRESHOLD < max_score) {
+			break;
+		}
 
-		//↓は、X-dropによって区間が二股にわかれることを許さない（i.e.二股の内側ならばDP値が小さくても計算する）ことを意味する。
+		if (max_score < front_max_score) {
+			max_score = front_max_score;
+			max_pos_y = front_max_pos_y;
+			max_pos_x = front_max_pos_x;
+		}
+
+
+		//↓は、X-dropによって区間が二股にわかれない（i.e.二股の内側ならばDP値が小さくても計算する）ケース。
 		for (; now_upperrightmost_y <= now_lowerleftmost_y && now_lowerleftmost_x <= now_upperrightmost_x; now_upperrightmost_y++, now_upperrightmost_x--) {
 			if (Get(now_upperrightmost_y, now_upperrightmost_x) + X_THRESHOLD < max_score)Set(now_upperrightmost_y, now_upperrightmost_x, minus_inf);
 			else break;
@@ -1860,21 +1884,22 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_3
 			if (Get(now_lowerleftmost_y, now_lowerleftmost_x) + X_THRESHOLD < max_score)Set(now_lowerleftmost_y, now_lowerleftmost_x, minus_inf);
 			else break;
 		}
+
+		//↓は、X-dropによって区間が二股にわかれるケース。
+		for (int y = now_upperrightmost_y, x = now_upperrightmost_x; y <= now_lowerleftmost_y && now_lowerleftmost_x <= x; y++, x--) {
+			if (Get(y, x) + X_THRESHOLD < max_score)Set(y, x, minus_inf);
+		}
+
 		assert(now_upperrightmost_y <= now_lowerleftmost_y
 			&& now_lowerleftmost_x <= now_upperrightmost_x);
 
-		if (max_score < front_max_score) {
-			max_score = front_max_score;
-			max_pos_y = front_max_pos_y;
-			max_pos_x = front_max_pos_x;
-		}
 	}
 
 	std::vector<std::pair<int, int>>traceback;
 	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
 	for (int i = max_pos_y, j = max_pos_x; i || j;) {
 		int score = Get(i, j);
-		if (i && j && score == Get(i - 1, j - 1) + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH)) {
+		if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
 			--i;
 			--j;
 		}
@@ -1892,9 +1917,160 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_111_3
 	return std::make_pair(max_score, traceback);
 }
 
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd(
+	const std::array<uint8_t, 16384>&obs1,
+	const std::array<uint8_t, 16384>&obs2) {
+
+	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
+
+	//SemiGlobalと言ってるのは、
+	//・ゼロとの比較をしない (Global)
+	//・左上端からアライメントがスタートする (Global)
+	//・右下端でアライメントが終わるとは限らない。スコア最大の地点からトレースバックする (Local)
+	//の意味
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
+
+	__m256i answer_8bit = _mm256_setzero_si256();
+	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
+	const __m256i scorematrix_plus_gap_8bit = _mm256_set_epi8(
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH,
+		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH, GAP - MISMATCH,
+		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
+	const __m256i reverser = _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL);
+
+	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t obs1p[1 + 16384 + 310];
+
+	obs1p[0] = 0xF0;
+	for (int i = 0; i < 16384; ++i)obs1p[i + 1] = obs1[i];
+	for (int i = 0; i < 31; ++i)obs1p[i + 1 + 16384] = 0xF0;
+
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs1p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//for (int i = 0; i < 16384; i += 32) {
+	//	const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&obs1[i]), (__m128i *)(&obs1[i + 16]));
+	//	const __m256i tmp2 = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));
+	//	_mm256_storeu_si256((__m256i *)&obs1p[31 + 16384 - i - 32], tmp2);
+	//}
+	//obs1p[31 + 16384] = 0xF0;
+
+
+	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+
+	for (int i = 0; i < 32; ++i)obs2p[i] = 0xF0;
+	for (int i = 0; i < 16384; ++i)obs2p[i + 32] = obs2[i];
+	for (int i = 0; i < 31; ++i)obs2p[i + 32 + 16384] = 0xF0;
+
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i+30+16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//std::memcpy(&obs2p[31], &obs2[0], 16384);
+
+
+	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
+	alignas(32)uint8_t dp[32 * MAX_ROUND] = {};
+	alignas(32)uint8_t offset_diff[MAX_ROUND] = {};
+	int dp_pos_y[MAX_ROUND] = {};//anti-diagonalの32要素のうち右上端要素のy座標。
+	int dp_pos_x[MAX_ROUND] = {};//anti-diagonalの32要素のうち右上端要素のx座標。先頭31要素パディングされていることに注意。
+
+	dp[0] = X_THRESHOLD;//XDropの閾値をオフセットとして使っている。
+	offset_diff[0] = 0;
+	dp_pos_y[0] = 0;
+	dp_pos_x[0] = 31;
+
+	//anti-diagonalの32要素は右上端が最上位バイトで左下端が最下位バイト。
+
+	__m256i horizontal = _mm256_setzero_si256();
+	__m256i vertical = _mm256_setzero_si256();
+	__m256i diagonal = _mm256_setzero_si256();
+	__m256i result = _mm256_set_epi8(dp[0], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+	__m256i prev_offset_diff = _mm256_setzero_si256();
+	alignas(32)uint8_t tmp256[32];
+
+	int round = 1, now_pos_y = 0, now_pos_x = 31, max_value_round = 0, max_score = 0;
+	for (; round < MAX_ROUND; ++round) {
+
+		//DPの進行方向を決める
+		_mm256_storeu_si256((__m256i *)&tmp256[0], result);
+		if (tmp256[0] < tmp256[31]) {
+			//右に行く
+			diagonal = vertical;
+			horizontal = result;
+			vertical = _mm256_alignr_epi8(_mm256_permute2x128_si256(result, result, 0b1000'0001), result, 1);
+			++now_pos_x;
+			if (32 + 16384 + 31 < now_pos_x) {
+				break;
+			}
+		}
+		else {
+			//下に行く
+			diagonal = horizontal;
+			vertical = result;
+			horizontal = _mm256_alignr_epi8(result, _mm256_permute2x128_si256(result, result, 0b0000'1000), 15);
+			++now_pos_y;
+			if (1 + 16384 < now_pos_y) {
+				break;
+			}
+		}
+		dp_pos_y[round] = now_pos_y;
+		dp_pos_x[round] = now_pos_x;
+		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[now_pos_x - 31]);
+		const __m256i sequence_tate = _mm256_loadu_si256((__m256i *)&obs1p[now_pos_y]);
+		const __m256i sequence_tate_reverse = _mm256_shuffle_epi8(_mm256_permute2x128_si256(sequence_tate, sequence_tate, 0b0000'0001), reverser);//シーケンスを逆順にしておく
+
+
+		//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
+		const __m256i tate_x4 = _mm256_slli_epi64(sequence_tate_reverse, 2);
+		const __m256i index_score_matrix_8bit = _mm256_add_epi8(tate_x4, sequence_yoko);
+		const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix_8bit);
+
+		//DP本体の計算を行いresultに格納する。
+		const __m256i tmp2 = _mm256_adds_epu8(diagonal, value_score_matrix_plus_gap_8bit);
+		const __m256i tmp3 = _mm256_subs_epu8(tmp2, prev_offset_diff);//←これをこのタイミングで引く理由は、普通のXDropと挙動を一致させたいから
+		const __m256i tmp4 = _mm256_cmpeq_epi8(diagonal, _mm256_setzero_si256());
+		const __m256i tmp5 = _mm256_andnot_si256(tmp4, tmp3);
+		const __m256i tmp6 = _mm256_max_epu8(horizontal, vertical);
+		const __m256i tmp7 = _mm256_max_epu8(tmp5, tmp6);
+		result = _mm256_subs_epu8(tmp7, gap_8bit);
+
+		//resultの最大値がX_THRESHOLDより大きければ、差分を引いてoffsetを変更する。
+		const __m256i tmp1m = _mm256_max_epu8(result, _mm256_permute2x128_si256(result, result, 0b0000'0001));
+		const __m256i tmp2m = _mm256_max_epu8(tmp1m, _mm256_shuffle_epi8(tmp1m, _mm256_set_epi64x(0x0e0f0c0d0a0b0809ULL, 0x0607040502030001ULL, 0x0e0f0c0d0a0b0809ULL, 0x0607040502030001ULL)));
+		const __m256i tmp3m = _mm256_max_epu8(tmp2m, _mm256_shuffle_epi8(tmp2m, _mm256_set_epi64x(0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL, 0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL)));
+		const __m256i tmp4m = _mm256_max_epu8(tmp3m, _mm256_shuffle_epi8(tmp3m, _mm256_set_epi64x(0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL)));
+		const __m256i result_max = _mm256_max_epu8(tmp4m, _mm256_shuffle_epi8(tmp4m, _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL)));
+		const __m256i now_offset_diff = _mm256_subs_epu8(result_max, _mm256_set1_epi8(X_THRESHOLD));
+		result = _mm256_subs_epu8(result, now_offset_diff);
+		offset_diff[round] = (uint8_t)(_mm256_cvtsi256_si32(now_offset_diff));
+		_mm256_storeu_si256((__m256i *)&dp[32 * round], result);
+		prev_offset_diff = now_offset_diff;
+
+		if (_mm256_testz_si256(result_max, result_max)) {
+			//resultのすべての値がXDropされるなら終了
+			break;
+		}
+		else if (offset_diff[round]) {
+			//offsetが更新されるということは、そのラウンドで過去最大値が出たので、そこを記録
+			max_value_round = round;
+			max_score += offset_diff[round];
+		}
+	}
+
+	//TODO: トレースバック
+
+	return std::make_pair(max_score, std::vector<std::pair<int, int>>());
+}
+
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_XDrop_111_70(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
+
+	//ナイーブなXDropを実装した。
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, X_THRESHOLD = 70;
 	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
@@ -1988,19 +2164,24 @@ void TestSemiGlobal() {
 	std::uniform_int_distribution<int> dice(0, 19);
 
 	for (int iteration = 0; iteration < 10000000; iteration++) {
-		std::cout << iteration << std::endl;
+		//std::cout << iteration << std::endl;
 		std::array<uint8_t, 16384>a, b;
 		for (int i = 0; i < 16384; ++i) {
 			a[i] = dna(rnd);
-			if (dice(rnd))b[i] = a[i];
+			if (0&&dice(rnd))b[i] = a[i];
 			else b[i] = dna(rnd);
-		}
 
-		const auto ans1 = SemiGlobal_111(a, b);
-		const auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
-		//const auto ans3 = SemiGlobal_XDrop_111_70(a, b);
-		assert(ans1 == ans2);
-		//assert(ans1 == ans3);
+			
+
+		}
+		const auto ans2 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
+		const auto ans3 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd(a, b);
+
+		//const auto ans1 = SemiGlobal_111(a, b);
+		//assert(ans1 == ans2);
+		//assert(ans1.first == ans3.first);
+		//assert(ans2.first == ans3.first);
+		if (ans2.first != ans3.first)std::cout << ans2.first << " " << ans3.first << std::endl;
 	}
 	return;
 
@@ -2018,7 +2199,7 @@ void InfinitySemiGlobal() {
 
 	for (;;) {
 
-		const auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+		const auto ans2 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
 	}
 	return;
 }
@@ -2036,7 +2217,7 @@ void SpeedtestSemiGlobal() {
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
 		for (int iteration = 0; iteration < 1000; ++iteration) {
-			volatile auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+			volatile auto ans2 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
@@ -2045,7 +2226,7 @@ void SpeedtestSemiGlobal() {
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
 		for (int iteration = 0; iteration < 1000; ++iteration) {
-			volatile auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+			volatile auto ans2 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
@@ -2054,7 +2235,7 @@ void SpeedtestSemiGlobal() {
 	{
 		auto start = std::chrono::system_clock::now(); // 計測開始時間
 		for (int iteration = 0; iteration < 1000; ++iteration) {
-			volatile auto ans2 = SemiGlobal_AdaptiveBanded_111_32_70(a, b);
+			volatile auto ans2 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
 		}
 		auto end = std::chrono::system_clock::now();  // 計測終了時間
 		double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(); //処理に要した時間をミリ秒に変換
@@ -2467,7 +2648,7 @@ void speedtest111x32() {
 int main(void) {
 
 	TestSemiGlobal();
-	InfinitySemiGlobal();
+	//InfinitySemiGlobal();
 	SpeedtestSemiGlobal();
 
 	//TestUnpack();
