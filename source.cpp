@@ -1745,7 +1745,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 	return std::make_pair(max_score, traceback);
 }
 
-std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70(
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_old(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
 
@@ -1917,6 +1917,138 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	return std::make_pair(max_score, traceback);
 }
 
+std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70(
+	const std::array<uint8_t, 16384>&obs1,
+	const std::array<uint8_t, 16384>&obs2) {
+
+	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
+
+	//SemiGlobalと言ってるのは、
+	//・ゼロとの比較をしない (Global)
+	//・左上端からアライメントがスタートする (Global)
+	//・右下端でアライメントが終わるとは限らない。スコア最大の地点からトレースバックする (Local)
+	//の意味
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
+	constexpr int minus_inf = std::numeric_limits<int>::min() / 2;
+
+	const int scorematrix[16] = {
+		MATCH, -MISMATCH, -MISMATCH, -MISMATCH,
+		-MISMATCH, MATCH, -MISMATCH, -MISMATCH,
+		-MISMATCH, -MISMATCH, MATCH, -MISMATCH,
+		-MISMATCH ,-MISMATCH ,-MISMATCH ,MATCH
+	};
+
+	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t obs1p[1 + 16384 + 310];
+
+	obs1p[0] = 0xF0;
+	for (int i = 0; i < 16384; ++i)obs1p[i + 1] = obs1[i];
+	for (int i = 0; i < 31; ++i)obs1p[i + 1 + 16384] = 0xF0;
+
+	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+
+	for (int i = 0; i < 32; ++i)obs2p[i] = 0xF0;
+	for (int i = 0; i < 16384; ++i)obs2p[i + 32] = obs2[i];
+	for (int i = 0; i < 31; ++i)obs2p[i + 32 + 16384] = 0xF0;
+
+	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
+	alignas(32)uint8_t dp[32 * MAX_ROUND] = {};
+	int dp_pos_y[MAX_ROUND] = {};//anti-diagonalの32要素のうち右上端要素のy座標。
+	int dp_pos_x[MAX_ROUND] = {};//anti-diagonalの32要素のうち右上端要素のx座標。先頭31要素パディングされていることに注意。
+
+	dp[0] = X_THRESHOLD;//XDropの閾値をオフセットとして使っている。
+	dp_pos_y[0] = 0;
+	dp_pos_x[0] = 31;
+
+	int horizontal[32] = {};
+	int vertical[32] = {};
+	int diagonal[32] = {};
+	int result[32] = {};
+	result[31] = dp[0];
+
+	int round = 1, now_pos_y = 0, now_pos_x = 31, max_round = 0, max_score = 0;
+	for (; round < MAX_ROUND; ++round) {
+
+		//DPの進行方向を決める
+		if (result[0] < result[31]) {
+			//右に行く
+			for(int i = 0; i < 32; ++i)diagonal[i] = vertical[i];
+			for (int i = 0; i < 32; ++i)horizontal[i] = result[i];
+			for (int i = 0; i < 31; ++i)vertical[i] = result[i + 1];
+			vertical[31] = 0;
+			++now_pos_x;
+			if (32 + 16384 + 31 < now_pos_x) {
+				break;
+			}
+		}
+		else {
+			//下に行く
+			for (int i = 0; i < 32; ++i)diagonal[i] = horizontal[i];
+			for (int i = 0; i < 32; ++i)vertical[i] = result[i];
+			for (int i = 1; i < 32; ++i)horizontal[i] = result[i - 1];
+			horizontal[0] = 0;
+			++now_pos_y;
+			if (1 + 16384 < now_pos_y) {
+				break;
+			}
+		}
+		dp_pos_y[round] = now_pos_y;
+		dp_pos_x[round] = now_pos_x;
+
+		int round_max_score = 0;
+		for (int i = 0; i < 32; ++i) {
+			int score = 0;
+			if (obs1p[now_pos_y + (31 - i)] < 4 && obs2p[now_pos_x - (31 - i)] < 4)score = scorematrix[obs1p[now_pos_y + (31 - i)] * 4 + obs2p[now_pos_x - (31 - i)]];
+			result[i] = 0;
+			if (diagonal[i] != 0)result[i] = std::max<int>(result[i], diagonal[i] + score);
+			if (horizontal[i] != 0)result[i] = std::max<int>(result[i], horizontal[i] - GAP);
+			if (vertical[i] != 0)result[i] = std::max<int>(result[i], vertical[i] - GAP);
+			if (round_max_score < result[i])round_max_score = result[i];
+		}
+
+		if (max_score < round_max_score) {
+			max_round = round;
+			max_score = round_max_score;
+		}
+
+		for (int i = 0; i < 32; ++i) {
+			if (result[i] < max_score - X_THRESHOLD)result[i] = 0;
+		}
+
+		if (round_max_score == 0) {
+			//resultのすべての値がXDropされるなら終了
+			break;
+		}
+	}
+
+	return std::make_pair(max_score - X_THRESHOLD, std::vector<std::pair<int, int>>());
+
+	//std::vector<std::pair<int, int>>traceback;
+	//traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
+	//for (int i = max_pos_y, j = max_pos_x; i || j;) {
+	//	int score = Get(i, j);
+	//	if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
+	//		--i;
+	//		--j;
+	//	}
+	//	else if (i && score == Get(i - 1, j - 0) - GAP) {
+	//		--i;
+	//	}
+	//	else if (j && score == Get(i - 0, j - 1) - GAP) {
+	//		--j;
+	//	}
+	//	else assert(0);
+	//	traceback.push_back(std::make_pair(i, j));
+	//}
+
+	//std::reverse(traceback.begin(), traceback.end());
+	//return std::make_pair(max_score, traceback);
+}
+
+
+
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd(
 	const std::array<uint8_t, 16384>&obs1,
 	const std::array<uint8_t, 16384>&obs2) {
@@ -1931,7 +2063,6 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1, BANDWIDTH = 32, X_THRESHOLD = 70;
 
-	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
 	const __m256i scorematrix_plus_gap_8bit = _mm256_set_epi8(
 		GAP + MATCH, GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH,
@@ -2164,16 +2295,17 @@ void TestSemiGlobal() {
 	std::uniform_int_distribution<int> dice(0, 19);
 
 	for (int iteration = 0; iteration < 10000000; iteration++) {
-		//std::cout << iteration << std::endl;
+		std::cout << iteration << std::endl;
 		std::array<uint8_t, 16384>a, b;
 		for (int i = 0; i < 16384; ++i) {
 			a[i] = dna(rnd);
-			if (0&&dice(rnd))b[i] = a[i];
+			if (dice(rnd))b[i] = a[i];
 			else b[i] = dna(rnd);
 
-			
-
+			if (i < 16350)b[i] = a[i];
 		}
+
+
 		const auto ans2 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
 		const auto ans3 = SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd(a, b);
 
@@ -2181,7 +2313,33 @@ void TestSemiGlobal() {
 		//assert(ans1 == ans2);
 		//assert(ans1.first == ans3.first);
 		//assert(ans2.first == ans3.first);
-		if (ans2.first != ans3.first)std::cout << ans2.first << " " << ans3.first << std::endl;
+		if (ans2.first != ans3.first) {
+			std::cout << ans2.first << " " << ans3.first << std::endl;
+
+			//for (int i = 0; i < 16384; ++i) {
+			//	if (a[i] != b[i]) {
+			//		std::cout << i << std::endl;
+			//	}
+			//}
+
+
+			for (int i = 16350; i < 16384; ++i) {
+				std::cout << int(a[i]);
+			}
+			std::cout << std::endl;
+			for (int i = 16350; i < 16384; ++i) {
+				std::cout << int(b[i]);
+			}
+			std::cout << std::endl;
+
+
+			//const auto ans1 = SemiGlobal_111(a, b);
+			//std::cout << ans1.first << std::endl;
+			//assert(0);
+			const auto ans2a = SemiGlobal_AdaptiveBanded_XDrop_111_32_70(a, b);
+			const auto ans3a = SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd(a, b);
+
+		}
 	}
 	return;
 
