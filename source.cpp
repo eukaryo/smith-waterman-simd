@@ -33,31 +33,25 @@
 //#include <zmmintrin.h>//AVX-512
 
 int SmithWaterman(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
-	//Smith-Waterman, 全埋めDPをやってスコアだけを返す。トレースバックなし
-	//linear gap
-	//DNAなのでscore matrixは4*4対称行列で16要素
 
 #define INDEX(ii, jj) ((ii) * 129 + (jj))
 
 	int dp[129 * 129] = {};
-
 	int answer = 0;
 
 	for (int i = 1; i <= 128; ++i) {
 		for (int j = 1; j <= 128; ++j) {
 			const int index = INDEX(i, j);
 			dp[index] = 0;
-			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + score_matrix[obs1[i - 1] * 4 + obs2[j - 1]]);
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + score_matrix[seq1[i - 1] * 4 + seq2[j - 1]]);
 			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - gap_penalty);
 			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - gap_penalty);
 			answer = std::max<int>(answer, dp[index]);
-			//std::cout << dp[index] << " ";
 		}
-		//std::cout << std::endl;
 	}
 
 #undef INDEX
@@ -66,8 +60,8 @@ int SmithWaterman(
 }
 
 int SmithWaterman_simd(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -104,19 +98,19 @@ int SmithWaterman_simd(
 	//先頭15文字と末尾17文字をパディングして160文字にする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[160];
-	//for (int i = 0; i < 15; ++i)obs2p[i] = 0x80;
-	*(uint64_t *)(&obs2p[0]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[8]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[160];
+	//for (int i = 0; i < 15; ++i)seq2p[i] = 0x80;
+	*(uint64_t *)(&seq2p[0]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[8]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 15; i < 143; ++i)obs2p[i] = obs2[i - 15];
-	//for (int i = 15; i < 143; i += 8)*(uint64_t *)(&obs2p[i]) = *(uint64_t *)(&obs2[i - 15]);
-	std::memcpy(&obs2p[15], &obs2[0], 128);
+	//for (int i = 15; i < 143; ++i)seq2p[i] = seq2[i - 15];
+	//for (int i = 15; i < 143; i += 8)*(uint64_t *)(&seq2p[i]) = *(uint64_t *)(&seq2[i - 15]);
+	std::memcpy(&seq2p[15], &seq2[0], 128);
 
-	//for (int i = 143; i < 160; ++i)obs2p[i] = 0x80;
-	obs2p[143] = 0x80;
-	*(uint64_t *)(&obs2p[144]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[152]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 143; i < 160; ++i)seq2p[i] = 0x80;
+	seq2p[143] = 0x80;
+	*(uint64_t *)(&seq2p[144]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[152]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -131,7 +125,7 @@ int SmithWaterman_simd(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&obs1[i]));
+		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&seq1[i]));
 		const __m256i sequence_tate = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0, 0, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i tate2 = _mm256_slli_epi64(sequence_tate, 2);//2ビット左シフト(=4倍)
 
@@ -143,7 +137,7 @@ int SmithWaterman_simd(
 		for (int j = 1; j < 10; ++j) {
 
 			__m256i next_value_yoko = yoko[j];
-			__m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[(j - 1) * 16]);
+			__m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[(j - 1) * 16]);
 
 			for (int k = 0; k < 16; ++k) {
 
@@ -214,8 +208,8 @@ int SmithWaterman_simd(
 }
 
 int SmithWaterman_simd2(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -230,21 +224,21 @@ int SmithWaterman_simd2(
 	//先頭15文字と末尾33文字をパディングして176文字にする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[176];
-	//for (int i = 0; i < 15; ++i)obs2p[i] = 0x80;
-	*(uint64_t *)(&obs2p[0]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[8]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[176];
+	//for (int i = 0; i < 15; ++i)seq2p[i] = 0x80;
+	*(uint64_t *)(&seq2p[0]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[8]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 15; i < 143; ++i)obs2p[i] = obs2[i - 15];
-	//for (int i = 15; i < 143; i += 8)*(uint64_t *)(&obs2p[i]) = *(uint64_t *)(&obs2[i - 15]);
-	std::memcpy(&obs2p[15], &obs2[0], 128);
+	//for (int i = 15; i < 143; ++i)seq2p[i] = seq2[i - 15];
+	//for (int i = 15; i < 143; i += 8)*(uint64_t *)(&seq2p[i]) = *(uint64_t *)(&seq2[i - 15]);
+	std::memcpy(&seq2p[15], &seq2[0], 128);
 
-	//for (int i = 143; i < 176; ++i)obs2p[i] = 0x80;
-	obs2p[143] = 0x80;
-	*(uint64_t *)(&obs2p[144]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[152]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[160]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[168]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 143; i < 176; ++i)seq2p[i] = 0x80;
+	seq2p[143] = 0x80;
+	*(uint64_t *)(&seq2p[144]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[152]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[160]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[168]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -259,7 +253,7 @@ int SmithWaterman_simd2(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&obs1[i]));
+		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&seq1[i]));
 		const __m256i sequence_tate = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0, 0, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i tate2 = _mm256_slli_epi64(sequence_tate, 2);//2ビット左シフト(=4倍)
 
@@ -271,7 +265,7 @@ int SmithWaterman_simd2(
 		for (int j = 1; j < 10; ++j) {
 
 			__m256i next_value_yoko = yoko[j];
-			__m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[(j - 1) * 16]);
+			__m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[(j - 1) * 16]);
 
 			for (int k = 0; k < 16; ++k) {
 
@@ -283,7 +277,7 @@ int SmithWaterman_simd2(
 				//sequence_yoko = _mm256_alignr_epi8(_mm256_permute2x128_si256(sequence_yoko, sequence_yoko, 0b1000'0001), sequence_yoko, 1);
 
 				//↑はperm命令とalignr命令が詰まる可能性があって、loaduで同じことをやったほうが速い↓
-				sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[(j - 1) * 16 + k + 1]);
+				sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[(j - 1) * 16 + k + 1]);
 
 				//スコアマトリックスの値はuint8_tだったがuint16_tに"キャスト"する。上位128bitは不定だったがここで潰れる。
 				const __m256i tmp2 = _mm256_permute4x64_epi64(value_score_matrix_plus_gap_and_delta_8bit, 0b0001'0000);
@@ -345,8 +339,8 @@ int SmithWaterman_simd2(
 }
 
 int SmithWaterman_simd3(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -361,19 +355,19 @@ int SmithWaterman_simd3(
 	//先頭15文字と末尾17文字をパディングして160文字にする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[160];
-	//for (int i = 0; i < 15; ++i)obs2p[i] = 0x80;
-	*(uint64_t *)(&obs2p[0]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[8]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[160];
+	//for (int i = 0; i < 15; ++i)seq2p[i] = 0x80;
+	*(uint64_t *)(&seq2p[0]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[8]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 15; i < 143; ++i)obs2p[i] = obs2[i - 15];
-	//for (int i = 15; i < 143; i += 8)*(uint64_t *)(&obs2p[i]) = *(uint64_t *)(&obs2[i - 15]);
-	std::memcpy(&obs2p[15], &obs2[0], 128);
+	//for (int i = 15; i < 143; ++i)seq2p[i] = seq2[i - 15];
+	//for (int i = 15; i < 143; i += 8)*(uint64_t *)(&seq2p[i]) = *(uint64_t *)(&seq2[i - 15]);
+	std::memcpy(&seq2p[15], &seq2[0], 128);
 
-	//for (int i = 143; i < 176; ++i)obs2p[i] = 0x80;
-	obs2p[143] = 0x80;
-	*(uint64_t *)(&obs2p[144]) = 0x8080'8080'8080'8080ULL;
-	*(uint64_t *)(&obs2p[152]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 143; i < 176; ++i)seq2p[i] = 0x80;
+	seq2p[143] = 0x80;
+	*(uint64_t *)(&seq2p[144]) = 0x8080'8080'8080'8080ULL;
+	*(uint64_t *)(&seq2p[152]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -388,7 +382,7 @@ int SmithWaterman_simd3(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&obs1[i]));
+		const __m256i tmp1 = _mm256_zextsi128_si256(_mm_loadu_si128((const __m128i *)&seq1[i]));
 		const __m256i inverse_sequence_tate = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0, 0, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_x4 = _mm256_slli_epi64(inverse_sequence_tate, 2);//2ビット左シフト(=4倍)
 
@@ -404,7 +398,7 @@ int SmithWaterman_simd3(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。引かれる値はuint8_tで、上位128bitは不定だがあとで潰れるのでよい。
-				const __m256i sequence_yoko = _mm256_zextsi128_si256(_mm_loadu_si128((__m128i *)&obs2p[(j - 2) * 8 + k]));
+				const __m256i sequence_yoko = _mm256_zextsi128_si256(_mm_loadu_si128((__m128i *)&seq2p[(j - 2) * 8 + k]));
 				const __m256i index_score_matrix_8bit = _mm256_add_epi8(inverse_sequence_tate_x4, sequence_yoko);
 				const __m256i value_score_matrix_plus_gap_and_delta_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_8bit);
 
@@ -466,8 +460,8 @@ int SmithWaterman_simd3(
 }
 
 int SmithWaterman_simd4(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -480,16 +474,16 @@ int SmithWaterman_simd4(
 	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[320];
-	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[320];
+	//for (int i = 0; i < 32; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
-	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&seq2p[i]) = 0x8000 + seq2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&seq2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&seq2[i])), _mm256_set1_epi16(0x8000)));
 
-	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
-	*(uint16_t *)(&obs2p[286]) = 0x8080;
-	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 286; i < 320; ++i)seq2p[i] = 0x80;
+	*(uint16_t *)(&seq2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -503,7 +497,7 @@ int SmithWaterman_simd4(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&seq1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
 		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
 
@@ -519,7 +513,7 @@ int SmithWaterman_simd4(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k * 2]);
 				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
 				const __m256i value_score_matrix_plus_gap_and_delta_16bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_16bit_hi0x80);
 
@@ -577,8 +571,8 @@ int SmithWaterman_simd4(
 }
 
 int SmithWaterman_simd5(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -591,16 +585,16 @@ int SmithWaterman_simd5(
 	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[320];
-	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[320];
+	//for (int i = 0; i < 32; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
-	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&seq2p[i]) = 0x8000 + seq2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&seq2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&seq2[i])), _mm256_set1_epi16(0x8000)));
 
-	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
-	*(uint16_t *)(&obs2p[286]) = 0x8080;
-	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 286; i < 320; ++i)seq2p[i] = 0x80;
+	*(uint16_t *)(&seq2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -615,7 +609,7 @@ int SmithWaterman_simd5(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&seq1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
 		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
 
@@ -629,7 +623,7 @@ int SmithWaterman_simd5(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k * 2]);
 				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
 				const __m256i value_score_matrix_plus_gap_and_delta_16bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_16bit_hi0x80);
 
@@ -670,8 +664,8 @@ int SmithWaterman_simd5(
 }
 
 int SmithWaterman_simd6(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -684,16 +678,16 @@ int SmithWaterman_simd6(
 	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[320];
-	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[320];
+	//for (int i = 0; i < 32; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
-	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&seq2p[i]) = 0x8000 + seq2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&seq2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&seq2[i])), _mm256_set1_epi16(0x8000)));
 
-	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
-	*(uint16_t *)(&obs2p[286]) = 0x8080;
-	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 286; i < 320; ++i)seq2p[i] = 0x80;
+	*(uint16_t *)(&seq2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -707,7 +701,7 @@ int SmithWaterman_simd6(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&seq1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
 		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
 
@@ -721,7 +715,7 @@ int SmithWaterman_simd6(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k * 2]);
 				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
 				const __m256i value_score_matrix_plus_gap_and_delta_16bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_16bit_hi0x80);
 
@@ -762,8 +756,8 @@ int SmithWaterman_simd6(
 }
 
 int SmithWaterman_simd7(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -776,16 +770,16 @@ int SmithWaterman_simd7(
 	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[320];
-	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[320];
+	//for (int i = 0; i < 32; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
-	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&seq2p[i]) = 0x8000 + seq2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&seq2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&seq2[i])), _mm256_set1_epi16(0x8000)));
 
-	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
-	*(uint16_t *)(&obs2p[286]) = 0x8080;
-	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 286; i < 320; ++i)seq2p[i] = 0x80;
+	*(uint16_t *)(&seq2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -799,7 +793,7 @@ int SmithWaterman_simd7(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&seq1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
 		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
 
@@ -815,7 +809,7 @@ int SmithWaterman_simd7(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k * 2]);
 				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
 				const __m256i value_score_matrix_plus_gap_and_delta_16bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_16bit_hi0x80);
 
@@ -856,8 +850,8 @@ int SmithWaterman_simd7(
 }
 
 int SmithWaterman_simd8(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -870,16 +864,16 @@ int SmithWaterman_simd8(
 	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[320];
-	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[320];
+	//for (int i = 0; i < 32; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
-	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&seq2p[i]) = 0x8000 + seq2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&seq2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&seq2[i])), _mm256_set1_epi16(0x8000)));
 
-	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
-	*(uint16_t *)(&obs2p[286]) = 0x8080;
-	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 286; i < 320; ++i)seq2p[i] = 0x80;
+	*(uint16_t *)(&seq2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i delta_plus_gap_16bit = _mm256_set1_epi16(127);
@@ -893,7 +887,7 @@ int SmithWaterman_simd8(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&seq1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
 		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
 
@@ -909,7 +903,7 @@ int SmithWaterman_simd8(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k * 2]);
 				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
 				const __m256i value_score_matrix_plus_gap_and_delta_16bit = _mm256_shuffle_epi8(scorematrix_plus_gap_and_delta_8bit, index_score_matrix_16bit_hi0x80);
 
@@ -957,8 +951,8 @@ int SmithWaterman_simd8(
 }
 
 int SmithWaterman_simd9(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	const std::array<int8_t, 16>&score_matrix,
 	const int8_t gap_penalty) {
 
@@ -971,16 +965,16 @@ int SmithWaterman_simd9(
 	//先頭30文字と末尾34文字をパディングして、かつ各文字を16bitにして、トータルで320バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[320];
-	//for (int i = 0; i < 32; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[320];
+	//for (int i = 0; i < 32; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&obs2p[i]) = 0x8000 + obs2[i / 2 - 15];
-	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&obs2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&obs2[i])), _mm256_set1_epi16(0x8000)));
+	//for (int i = 30; i < 286; i += 2)*(uint16_t *)(&seq2p[i]) = 0x8000 + seq2[i / 2 - 15];
+	for (int i = 0; i < 128; i += 16)_mm256_storeu_si256((__m256i *)(&seq2p[30 + i * 2]), _mm256_add_epi64(_mm256_cvtepi8_epi16(_mm_loadu_si128((__m128i *)&seq2[i])), _mm256_set1_epi16(0x8000)));
 
-	//for (int i = 286; i < 320; ++i)obs2p[i] = 0x80;
-	*(uint16_t *)(&obs2p[286]) = 0x8080;
-	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 286; i < 320; ++i)seq2p[i] = 0x80;
+	*(uint16_t *)(&seq2p[286]) = 0x8080;
+	for (int i = 288; i < 320; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_16bit = _mm256_setzero_si256();
 	const __m256i gap_16bit = _mm256_set1_epi16(gap_penalty);
@@ -1005,7 +999,7 @@ int SmithWaterman_simd9(
 
 	for (int i = 0; i < 128; i += 16) {
 
-		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&obs1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
+		const __m128i tmp2 = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i *)&seq1[i]), _mm_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_16bit_hi0x00 = _mm256_cvtepi8_epi16(tmp2);
 		const __m256i inverse_sequence_tate_16bit_hi0x00_x4 = _mm256_slli_epi64(inverse_sequence_tate_16bit_hi0x00, 2);//2ビット左シフト(=4倍)
 
@@ -1021,7 +1015,7 @@ int SmithWaterman_simd9(
 			for (int k = 0; k < 8; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k * 2]);
+				const __m256i sequence_yoko_16bit_hi0x80 = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k * 2]);
 				const __m256i index_score_matrix_16bit_hi0x80 = _mm256_add_epi8(inverse_sequence_tate_16bit_hi0x00_x4, sequence_yoko_16bit_hi0x80);
 				const __m256i tmpx1 = _mm256_shuffle_epi8(scorematrix_plus_gap_and_scoreoffset_8bit, index_score_matrix_16bit_hi0x80);
 				const __m256i value_score_matrix_plus_gap_16bit = _mm256_sub_epi16(tmpx1, _mm256_set1_epi16(score_offset));
@@ -1077,8 +1071,8 @@ int SmithWaterman_simd9(
 }
 
 int SmithWaterman_111(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2) {
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2) {
 	//Smith-Waterman, 全埋めDPをやってスコアだけを返す。トレースバックなし
 	//linear gap
 
@@ -1094,7 +1088,7 @@ int SmithWaterman_111(
 		for (int j = 1; j <= 128; ++j) {
 			const int index = INDEX(i, j);
 			dp[index] = 0;
-			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (seq1[i - 1] == seq2[j - 1] ? MATCH : -MISMATCH));
 			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
 			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
 			answer = std::max<int>(answer, dp[index]);
@@ -1109,8 +1103,8 @@ int SmithWaterman_111(
 }
 
 int SmithWaterman_8bit111simd(
-	const std::array<uint8_t, 128>&obs1,
-	const std::array<uint8_t, 128>&obs2) {
+	const std::array<uint8_t, 128>&seq1,
+	const std::array<uint8_t, 128>&seq2) {
 
 	//上のsimd9版からの変更点：
 	//(1)DP変数を符号なし8bit型にした。その代わりに(match, mismatch, gap)=(1,1,1)に固定した。
@@ -1120,16 +1114,16 @@ int SmithWaterman_8bit111simd(
 	//先頭31文字と末尾33文字をパディングして、トータルで192バイトにする。
 	//0x80で埋める理由は、スコアマトリックス16要素の表引きをpshufbで行うときに、
 	//パディングした部分のインデックスの最上位ビットが立立っているとpshufbの仕様により0が与えられるのを利用するためである。
-	alignas(32)uint8_t obs2p[192];
-	//for (int i = 0; i < 31; ++i)obs2p[i] = 0x80;
-	for (int i = 0; i < 31; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	alignas(32)uint8_t seq2p[192];
+	//for (int i = 0; i < 31; ++i)seq2p[i] = 0x80;
+	for (int i = 0; i < 31; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
-	//for (int i = 31; i < 159; ++i)obs2p[i] = obs2[i - 31];
-	std::memcpy(&obs2p[31], &obs2[0], 128);
+	//for (int i = 31; i < 159; ++i)seq2p[i] = seq2[i - 31];
+	std::memcpy(&seq2p[31], &seq2[0], 128);
 
-	//for (int i = 159; i < 192; ++i)obs2p[i] = 0x80;
-	obs2p[159] = 0x80;
-	for (int i = 160; i < 192; i += 8)*(uint64_t *)(&obs2p[i]) = 0x8080'8080'8080'8080ULL;
+	//for (int i = 159; i < 192; ++i)seq2p[i] = 0x80;
+	seq2p[159] = 0x80;
+	for (int i = 160; i < 192; i += 8)*(uint64_t *)(&seq2p[i]) = 0x8080'8080'8080'8080ULL;
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
@@ -1160,7 +1154,7 @@ int SmithWaterman_8bit111simd(
 
 	for (int i = 0; i < 128; i += 32) {
 
-		const __m256i tmp1 = _mm256_loadu_si256((const __m256i *)&obs1[i]);
+		const __m256i tmp1 = _mm256_loadu_si256((const __m256i *)&seq1[i]);
 		const __m256i tmp2 = _mm256_shuffle_epi8(_mm256_permute2x128_si256(tmp1, tmp1, 0b0000'0001), reverser);//シーケンスを逆順にしておく
 		const __m256i inverse_sequence_tate_8bit_x4 = _mm256_slli_epi64(tmp2, 2);//2ビット左シフト(=4倍)
 
@@ -1176,7 +1170,7 @@ int SmithWaterman_8bit111simd(
 			for (int k = 0; k < 16; ++k) {
 
 				//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
-				const __m256i sequence_yoko_8bit = _mm256_loadu_si256((__m256i *)&obs2p[(j - 2) * 16 + k]);
+				const __m256i sequence_yoko_8bit = _mm256_loadu_si256((__m256i *)&seq2p[(j - 2) * 16 + k]);
 				const __m256i index_score_matrix_8bit = _mm256_add_epi8(inverse_sequence_tate_8bit_x4, sequence_yoko_8bit);
 				const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix_8bit);
 
@@ -1231,20 +1225,20 @@ int SmithWaterman_8bit111simd(
 }
 
 int SmithWaterman_8b111x32mark1(
-	const std::array<uint8_t, 128 * 32>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128 * 32>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	std::array<int, 32>& dest) {
 
 	//上のSmithWaterman_8bit111simdからの変更点:
-	//(1)obs1として32本の128merをまとめて受け取り、結果をまとめてdestに入れて返すようにした。
+	//(1)seq1として32本の128merをまとめて受け取り、結果をまとめてdestに入れて返すようにした。
 	//   （ちなみに返り値はdest[0]だがこれはなんとなくで深い意味はない）
 	//   平行四辺形埋めだと実質160merぶんの計算をやっており、はみ出た領域に対する計算が20%を占めていた。
 	//   32本の入力を転置してスライシングすればはみ出ないし、斜め埋めコンセプトのためのpermuteなどが不要になり、効率化すると思われた。
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
-	alignas(32)uint8_t transposed_obs1[32 * 128];
-	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_obs1[i * 32 + j] = obs1[j * 128 + i];
+	alignas(32)uint8_t transposed_seq1[32 * 128];
+	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_seq1[i * 32 + j] = seq1[j * 128 + i];
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
@@ -1265,7 +1259,7 @@ int SmithWaterman_8b111x32mark1(
 	for (int i = 0; i < 128; ++i) {
 		__m256i prev = _mm256_setzero_si256();
 		__m256i prev2 = _mm256_setzero_si256();
-		const __m256i sequence_tate_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[i * 32]), 2);
+		const __m256i sequence_tate_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_seq1[i * 32]), 2);
 
 		__m256i naname = yoko[1];
 		__m256i ue;
@@ -1274,7 +1268,7 @@ int SmithWaterman_8b111x32mark1(
 
 			ue = yoko[j];
 
-			const __m256i sequence_yoko = _mm256_set1_epi8(obs2[j - 2]);
+			const __m256i sequence_yoko = _mm256_set1_epi8(seq2[j - 2]);
 			const __m256i index_score_matrix_8bit = _mm256_add_epi8(sequence_tate_x4, sequence_yoko);
 			const __m256i value_score_matrix_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix_8bit);
 
@@ -1303,8 +1297,8 @@ int SmithWaterman_8b111x32mark1(
 }
 
 int SmithWaterman_8b111x32mark2(
-	const std::array<uint8_t, 128 * 32>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128 * 32>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	std::array<int, 32>& dest) {
 
 	//上のmark1からの変更点：
@@ -1314,8 +1308,8 @@ int SmithWaterman_8b111x32mark2(
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
-	alignas(32)uint8_t transposed_obs1[32 * 128];
-	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_obs1[i * 32 + j] = obs1[j * 128 + i];
+	alignas(32)uint8_t transposed_seq1[32 * 128];
+	for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_seq1[i * 32 + j] = seq1[j * 128 + i];
 
 	__m256i answer_8bit = _mm256_setzero_si256();
 	const __m256i gap_8bit = _mm256_set1_epi8(GAP);
@@ -1338,8 +1332,8 @@ int SmithWaterman_8b111x32mark2(
 		__m256i prev02 = _mm256_setzero_si256();
 		__m256i prev1 = _mm256_setzero_si256();
 		__m256i prev12 = _mm256_setzero_si256();
-		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 0) * 32]), 2);
-		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 1) * 32]), 2);
+		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_seq1[(i + 0) * 32]), 2);
+		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_seq1[(i + 1) * 32]), 2);
 
 		__m256i naname = yoko[1];
 		__m256i ue;
@@ -1348,7 +1342,7 @@ int SmithWaterman_8b111x32mark2(
 
 			ue = yoko[j];
 
-			const __m256i sequence_yoko = _mm256_set1_epi8(obs2[j - 2]);
+			const __m256i sequence_yoko = _mm256_set1_epi8(seq2[j - 2]);
 
 			const __m256i index_score_matrix0_8bit = _mm256_add_epi8(sequence_tate0_x4, sequence_yoko);
 			const __m256i value_score_matrix0_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix0_8bit);
@@ -1387,8 +1381,8 @@ int SmithWaterman_8b111x32mark2(
 }
 
 int SmithWaterman_8b111x32mark3(
-	const std::array<uint8_t, 128 * 32>&obs1,
-	const std::array<uint8_t, 128>&obs2,
+	const std::array<uint8_t, 128 * 32>&seq1,
+	const std::array<uint8_t, 128>&seq2,
 	std::array<int, 32>& dest) {
 
 	//上のmark2からの変更点：
@@ -1398,19 +1392,19 @@ int SmithWaterman_8b111x32mark3(
 
 	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
 
-	alignas(32)uint8_t transposed_obs1[32 * 128];
-	//for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_obs1[i * 32 + j] = obs1[j * 128 + i];
+	alignas(32)uint8_t transposed_seq1[32 * 128];
+	//for (int i = 0; i < 128; ++i)for (int j = 0; j < 32; ++j)transposed_seq1[i * 32 + j] = seq1[j * 128 + i];
 
 #define TRANSPOSE_16_16(ii,jj) \
 do{\
-	__m256i a0 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0x8 * 128]), (__m128i *)(&obs1[ii + 0x0 * 128]));\
-	__m256i a1 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0x9 * 128]), (__m128i *)(&obs1[ii + 0x1 * 128]));\
-	__m256i a2 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xA * 128]), (__m128i *)(&obs1[ii + 0x2 * 128]));\
-	__m256i a3 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xB * 128]), (__m128i *)(&obs1[ii + 0x3 * 128]));\
-	__m256i a4 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xC * 128]), (__m128i *)(&obs1[ii + 0x4 * 128]));\
-	__m256i a5 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xD * 128]), (__m128i *)(&obs1[ii + 0x5 * 128]));\
-	__m256i a6 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xE * 128]), (__m128i *)(&obs1[ii + 0x6 * 128]));\
-	__m256i a7 = _mm256_loadu2_m128i((__m128i *)(&obs1[ii + 0xF * 128]), (__m128i *)(&obs1[ii + 0x7 * 128]));\
+	__m256i a0 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0x8 * 128]), (__m128i *)(&seq1[ii + 0x0 * 128]));\
+	__m256i a1 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0x9 * 128]), (__m128i *)(&seq1[ii + 0x1 * 128]));\
+	__m256i a2 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0xA * 128]), (__m128i *)(&seq1[ii + 0x2 * 128]));\
+	__m256i a3 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0xB * 128]), (__m128i *)(&seq1[ii + 0x3 * 128]));\
+	__m256i a4 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0xC * 128]), (__m128i *)(&seq1[ii + 0x4 * 128]));\
+	__m256i a5 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0xD * 128]), (__m128i *)(&seq1[ii + 0x5 * 128]));\
+	__m256i a6 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0xE * 128]), (__m128i *)(&seq1[ii + 0x6 * 128]));\
+	__m256i a7 = _mm256_loadu2_m128i((__m128i *)(&seq1[ii + 0xF * 128]), (__m128i *)(&seq1[ii + 0x7 * 128]));\
 	__m256i b0 = _mm256_unpacklo_epi8(a0, a1);\
 	__m256i b1 = _mm256_unpacklo_epi8(a2, a3);\
 	__m256i b2 = _mm256_unpacklo_epi8(a4, a5);\
@@ -1443,14 +1437,14 @@ do{\
 	a5 = _mm256_permute4x64_epi64(b5, _MM_SHUFFLE(3, 1, 2, 0));\
 	a6 = _mm256_permute4x64_epi64(b6, _MM_SHUFFLE(3, 1, 2, 0));\
 	a7 = _mm256_permute4x64_epi64(b7, _MM_SHUFFLE(3, 1, 2, 0));\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x1 * 32]), (__m128i *)(&transposed_obs1[jj + 0x0 * 32]), a0);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x3 * 32]), (__m128i *)(&transposed_obs1[jj + 0x2 * 32]), a1);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x5 * 32]), (__m128i *)(&transposed_obs1[jj + 0x4 * 32]), a2);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x7 * 32]), (__m128i *)(&transposed_obs1[jj + 0x6 * 32]), a3);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0x9 * 32]), (__m128i *)(&transposed_obs1[jj + 0x8 * 32]), a4);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0xB * 32]), (__m128i *)(&transposed_obs1[jj + 0xA * 32]), a5);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0xD * 32]), (__m128i *)(&transposed_obs1[jj + 0xC * 32]), a6);\
-	_mm256_storeu2_m128i((__m128i *)(&transposed_obs1[jj + 0xF * 32]), (__m128i *)(&transposed_obs1[jj + 0xE * 32]), a7);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0x1 * 32]), (__m128i *)(&transposed_seq1[jj + 0x0 * 32]), a0);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0x3 * 32]), (__m128i *)(&transposed_seq1[jj + 0x2 * 32]), a1);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0x5 * 32]), (__m128i *)(&transposed_seq1[jj + 0x4 * 32]), a2);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0x7 * 32]), (__m128i *)(&transposed_seq1[jj + 0x6 * 32]), a3);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0x9 * 32]), (__m128i *)(&transposed_seq1[jj + 0x8 * 32]), a4);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0xB * 32]), (__m128i *)(&transposed_seq1[jj + 0xA * 32]), a5);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0xD * 32]), (__m128i *)(&transposed_seq1[jj + 0xC * 32]), a6);\
+	_mm256_storeu2_m128i((__m128i *)(&transposed_seq1[jj + 0xF * 32]), (__m128i *)(&transposed_seq1[jj + 0xE * 32]), a7);\
 }while(0)
 	for (int i = 0; i < 128; i += 16)for (int j = 0; j < 32; j += 16) {
 		TRANSPOSE_16_16((j * 128 + i), (i * 32 + j));
@@ -1479,8 +1473,8 @@ do{\
 		__m256i prev02 = _mm256_setzero_si256();
 		__m256i prev1 = _mm256_setzero_si256();
 		__m256i prev12 = _mm256_setzero_si256();
-		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 0) * 32]), 2);
-		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_obs1[(i + 1) * 32]), 2);
+		const __m256i sequence_tate0_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_seq1[(i + 0) * 32]), 2);
+		const __m256i sequence_tate1_x4 = _mm256_slli_epi64(_mm256_loadu_si256((__m256i *)&transposed_seq1[(i + 1) * 32]), 2);
 
 		__m256i naname = yoko[1];
 		__m256i ue;
@@ -1489,7 +1483,7 @@ do{\
 
 			ue = yoko[j];
 
-			const __m256i sequence_yoko = _mm256_set1_epi8(obs2[j - 2]);
+			const __m256i sequence_yoko = _mm256_set1_epi8(seq2[j - 2]);
 
 			const __m256i index_score_matrix0_8bit = _mm256_add_epi8(sequence_tate0_x4, sequence_yoko);
 			const __m256i value_score_matrix0_plus_gap_8bit = _mm256_shuffle_epi8(scorematrix_plus_gap_8bit, index_score_matrix0_8bit);
@@ -1526,6 +1520,62 @@ do{\
 	for (int i = 0; i < 32; ++i)dest[i] = answers[i];
 	return answers[0];
 }
+
+
+
+std::pair<int, std::vector<std::pair<int, int>>> SmithWaterman_111_long(
+	const std::vector<uint8_t>&seq1,
+	const std::array<uint8_t, 128>&seq2) {
+
+	constexpr uint8_t MATCH = 1, MISMATCH = 1, GAP = 1;
+
+#define INDEX(ii, jj) ((ii) * 129 + (jj))
+
+	std::vector<int>dp((seq1.size() + 1) * 129, 0);
+
+	int max_score = 0, max_i = 0, max_j = 0;
+
+	for (int i = 1; i <= seq1.size(); ++i) {
+		for (int j = 1; j <= 128; ++j) {
+			const int index = INDEX(i, j);
+			dp[index] = 0;
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (seq1[i - 1] == seq2[j - 1] ? MATCH : -MISMATCH));
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
+			dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
+			if (max_score < dp[index]) {
+				max_score = dp[index];
+				max_i = i;
+				max_j = j;
+			}
+		}
+	}
+
+	std::vector<std::pair<int, int>>traceback;
+	traceback.push_back(std::make_pair(max_i, max_j));
+	for (int i = max_i, j = max_j; i || j;) {
+		const int index = INDEX(i, j);
+		if (dp[index] == 0)break;
+		if (i && j && dp[index] == dp[INDEX(i - 1, j - 1)] + (seq1[i - 1] == seq2[j - 1] ? MATCH : -MISMATCH)) {
+			--i;
+			--j;
+		}
+		else if (i && dp[index] == dp[INDEX(i - 1, j - 0)] - GAP) {
+			--i;
+		}
+		else if (j && dp[index] == dp[INDEX(i - 0, j - 1)] - GAP) {
+			--j;
+		}
+		else assert(0);
+		traceback.push_back(std::make_pair(i, j));
+	}
+
+#undef INDEX
+
+	std::reverse(traceback.begin(), traceback.end());
+	return std::make_pair(max_score, traceback);
+}
+
+
 
 int unpack(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&dest) {
 	for (int i = 0; i < 32; ++i)for (int j = 0; j < 4; ++j)dest[i * 4 + j] = (src[i] >> (j * 2)) & 0b11;
@@ -1724,8 +1774,8 @@ int unpack_simd4(const std::array<uint8_t, 32>&src, std::array<uint8_t, 128>&des
 }
 
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
-	const std::array<uint8_t, 16384>&obs1,
-	const std::array<uint8_t, 16384>&obs2) {
+	const std::array<uint8_t, 16384>&seq1,
+	const std::array<uint8_t, 16384>&seq2) {
 
 	//ナイーブな全埋めを実装した。
 
@@ -1748,7 +1798,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 	for (int i = 0; i <= 16384; ++i) {
 		for (int j = 0; j <= 16384; ++j) {
 			const int index = INDEX(i, j);
-			if (i && j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH));
+			if (i && j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 1)] + (seq1[i - 1] == seq2[j - 1] ? MATCH : -MISMATCH));
 			if (i)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 1, j - 0)] - GAP);
 			if (j)dp[index] = std::max<int>(dp[index], dp[INDEX(i - 0, j - 1)] - GAP);
 			if (max_score < dp[index]) {
@@ -1763,7 +1813,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 	traceback.push_back(std::make_pair(max_i, max_j));
 	for (int i = max_i, j = max_j; i || j;) {
 		const int index = INDEX(i, j);
-		if (i && j && dp[index] == dp[INDEX(i - 1, j - 1)] + (obs1[i - 1] == obs2[j - 1] ? MATCH : -MISMATCH)) {
+		if (i && j && dp[index] == dp[INDEX(i - 1, j - 1)] + (seq1[i - 1] == seq2[j - 1] ? MATCH : -MISMATCH)) {
 			--i;
 			--j;
 		}
@@ -1784,8 +1834,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_111(
 }
 
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70(
-	const std::array<uint8_t, 16384>&obs1,
-	const std::array<uint8_t, 16384>&obs2) {
+	const std::array<uint8_t, 16384>&seq1,
+	const std::array<uint8_t, 16384>&seq2) {
 
 	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
 
@@ -1805,19 +1855,19 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		-MISMATCH ,-MISMATCH ,-MISMATCH ,MATCH
 	};
 
-	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
-	alignas(32)uint8_t obs1p[1 + 16384 + 31];
+	//seq1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t seq1p[1 + 16384 + 31];
 
-	obs1p[0] = 0xF0;
-	for (int i = 0; i < 16384; ++i)obs1p[i + 1] = obs1[i];
-	for (int i = 0; i < 31; ++i)obs1p[i + 1 + 16384] = 0xF0;
+	seq1p[0] = 0xF0;
+	for (int i = 0; i < 16384; ++i)seq1p[i + 1] = seq1[i];
+	for (int i = 0; i < 31; ++i)seq1p[i + 1 + 16384] = 0xF0;
 
-	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
-	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+	//seq2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t seq2p[32 + 16384 + 31];
 
-	for (int i = 0; i < 32; ++i)obs2p[i] = 0xF0;
-	for (int i = 0; i < 16384; ++i)obs2p[i + 32] = obs2[i];
-	for (int i = 0; i < 31; ++i)obs2p[i + 32 + 16384] = 0xF0;
+	for (int i = 0; i < 32; ++i)seq2p[i] = 0xF0;
+	for (int i = 0; i < 16384; ++i)seq2p[i + 32] = seq2[i];
+	for (int i = 0; i < 31; ++i)seq2p[i + 32 + 16384] = 0xF0;
 
 	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
 	int dp[32 * MAX_ROUND] = {};
@@ -1866,7 +1916,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		int round_max_score = 0;
 		for (int i = 0; i < 32; ++i) {
 			int score = 0;
-			if (obs1p[now_pos_y + (31 - i)] < 4 && obs2p[now_pos_x - (31 - i)] < 4)score = scorematrix[obs1p[now_pos_y + (31 - i)] * 4 + obs2p[now_pos_x - (31 - i)]];
+			if (seq1p[now_pos_y + (31 - i)] < 4 && seq2p[now_pos_x - (31 - i)] < 4)score = scorematrix[seq1p[now_pos_y + (31 - i)] * 4 + seq2p[now_pos_x - (31 - i)]];
 			else score = -MISMATCH;
 			result[i] = 0;
 			if (diagonal[i] != 0)result[i] = std::max<int>(result[i], diagonal[i] + score);
@@ -1907,7 +1957,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
 	for (int i = max_pos_y, j = max_pos_x; i || j;) {
 		int score = Get(i, j);
-		if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
+		if (i && j && score == Get(i - 1, j - 1) + scorematrix[seq1[i - 1] * 4 + seq2[j - 1]]) {
 			--i;
 			--j;
 		}
@@ -1926,8 +1976,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 }
 
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd(
-	const std::array<uint8_t, 16384>&obs1,
-	const std::array<uint8_t, 16384>&obs2) {
+	const std::array<uint8_t, 16384>&seq1,
+	const std::array<uint8_t, 16384>&seq2) {
 
 	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
 
@@ -1951,32 +2001,32 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
 	const __m256i reverser = _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL);
 
-	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
-	alignas(32)uint8_t obs1p[1 + 16384 + 31];
+	//seq1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t seq1p[1 + 16384 + 31];
 
-	obs1p[0] = 0xF0;
-	for (int i = 0; i < 16384; ++i)obs1p[i + 1] = obs1[i];
-	for (int i = 0; i < 31; ++i)obs1p[i + 1 + 16384] = 0xF0;
+	seq1p[0] = 0xF0;
+	for (int i = 0; i < 16384; ++i)seq1p[i + 1] = seq1[i];
+	for (int i = 0; i < 31; ++i)seq1p[i + 1 + 16384] = 0xF0;
 
-	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs1p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq1p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
 	//for (int i = 0; i < 16384; i += 32) {
-	//	const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&obs1[i]), (__m128i *)(&obs1[i + 16]));
+	//	const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&seq1[i]), (__m128i *)(&seq1[i + 16]));
 	//	const __m256i tmp2 = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));
-	//	_mm256_storeu_si256((__m256i *)&obs1p[31 + 16384 - i - 32], tmp2);
+	//	_mm256_storeu_si256((__m256i *)&seq1p[31 + 16384 - i - 32], tmp2);
 	//}
-	//obs1p[31 + 16384] = 0xF0;
+	//seq1p[31 + 16384] = 0xF0;
 
 
-	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
-	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+	//seq2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t seq2p[32 + 16384 + 31];
 
-	for (int i = 0; i < 32; ++i)obs2p[i] = 0xF0;
-	for (int i = 0; i < 16384; ++i)obs2p[i + 32] = obs2[i];
-	for (int i = 0; i < 31; ++i)obs2p[i + 32 + 16384] = 0xF0;
+	for (int i = 0; i < 32; ++i)seq2p[i] = 0xF0;
+	for (int i = 0; i < 16384; ++i)seq2p[i + 32] = seq2[i];
+	for (int i = 0; i < 31; ++i)seq2p[i + 32 + 16384] = 0xF0;
 
-	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i+30+16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	//std::memcpy(&obs2p[31], &obs2[0], 16384);
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i+30+16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//std::memcpy(&seq2p[31], &seq2[0], 16384);
 
 
 	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
@@ -2026,8 +2076,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		}
 		dp_pos_y[round] = now_pos_y;
 		dp_pos_x[round] = now_pos_x;
-		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[now_pos_x - 31]);
-		const __m256i sequence_tate = _mm256_loadu_si256((__m256i *)&obs1p[now_pos_y]);
+		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[now_pos_x - 31]);
+		const __m256i sequence_tate = _mm256_loadu_si256((__m256i *)&seq1p[now_pos_y]);
 		const __m256i sequence_tate_reverse = _mm256_shuffle_epi8(_mm256_permute2x128_si256(sequence_tate, sequence_tate, 0b0000'0001), reverser);//シーケンスを逆順にしておく
 
 
@@ -2096,7 +2146,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
 	for (int i = max_pos_y, j = max_pos_x; i || j;) {
 		int score = Get(i, j);
-		if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
+		if (i && j && score == Get(i - 1, j - 1) + scorematrix[seq1[i - 1] * 4 + seq2[j - 1]]) {
 			--i;
 			--j;
 		}
@@ -2115,8 +2165,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 }
 
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd_mark2(
-	const std::array<uint8_t, 16384>&obs1,
-	const std::array<uint8_t, 16384>&obs2) {
+	const std::array<uint8_t, 16384>&seq1,
+	const std::array<uint8_t, 16384>&seq2) {
 
 	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
 
@@ -2142,29 +2192,29 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
 	const __m256i reverser = _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL);
 
-	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
-	alignas(32)uint8_t obs1p[1 + 16384 + 31];
+	//seq1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t seq1p[1 + 16384 + 31];
 
-	obs1p[0] = 0xF0;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs1p[i + 16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	std::memcpy(&obs1p[1], &obs1[0], 16384);
+	seq1p[0] = 0xF0;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq1p[i + 16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	std::memcpy(&seq1p[1], &seq1[0], 16384);
 
 
-	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs1p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	//for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq1p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
 	//for (int i = 0; i < 16384; i += 32) {
-	//	const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&obs1[i]), (__m128i *)(&obs1[i + 16]));
+	//	const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&seq1[i]), (__m128i *)(&seq1[i + 16]));
 	//	const __m256i tmp2 = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));
-	//	_mm256_storeu_si256((__m256i *)&obs1p[31 + 16384 - i - 32], tmp2);
+	//	_mm256_storeu_si256((__m256i *)&seq1p[31 + 16384 - i - 32], tmp2);
 	//}
-	//obs1p[31 + 16384] = 0xF0;
+	//seq1p[31 + 16384] = 0xF0;
 
 
-	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
-	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+	//seq2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t seq2p[32 + 16384 + 31];
 
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i+31+16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	std::memcpy(&obs2p[32], &obs2[0], 16384);
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i+31+16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	std::memcpy(&seq2p[32], &seq2[0], 16384);
 
 
 	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
@@ -2214,8 +2264,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		}
 		dp_pos_y[round] = now_pos_y;
 		dp_pos_x[round] = now_pos_x;
-		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[now_pos_x - 31]);
-		const __m256i sequence_tate = _mm256_loadu_si256((__m256i *)&obs1p[now_pos_y]);
+		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[now_pos_x - 31]);
+		const __m256i sequence_tate = _mm256_loadu_si256((__m256i *)&seq1p[now_pos_y]);
 		const __m256i sequence_tate_reverse = _mm256_shuffle_epi8(_mm256_permute2x128_si256(sequence_tate, sequence_tate, 0b0000'0001), reverser);//シーケンスを逆順にしておく
 
 
@@ -2284,7 +2334,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
 	for (int i = max_pos_y, j = max_pos_x; i || j;) {
 		int score = Get(i, j);
-		if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
+		if (i && j && score == Get(i - 1, j - 1) + scorematrix[seq1[i - 1] * 4 + seq2[j - 1]]) {
 			--i;
 			--j;
 		}
@@ -2303,8 +2353,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 }
 
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd_mark3(
-	const std::array<uint8_t, 16384>&obs1,
-	const std::array<uint8_t, 16384>&obs2) {
+	const std::array<uint8_t, 16384>&seq1,
+	const std::array<uint8_t, 16384>&seq2) {
 
 	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
 
@@ -2331,28 +2381,28 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
 	const __m256i reverser = _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL);
 
-	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
-	alignas(32)uint8_t obs1p[1 + 16384 + 31];
+	//seq1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t seq1p[1 + 16384 + 31];
 
 
 	//逆順4倍
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs1p[i]) = 0xC0C0'C0C0'C0C0'C0C0ULL;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq1p[i]) = 0xC0C0'C0C0'C0C0'C0C0ULL;
 	for (int i = 0; i < 16384; i += 32) {
-		const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&obs1[i]), (__m128i *)(&obs1[i + 16]));
+		const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&seq1[i]), (__m128i *)(&seq1[i + 16]));
 		const __m256i tmp2 = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));
 		const __m256i tmp3 = _mm256_slli_epi64(tmp2, 2);
-		_mm256_storeu_si256((__m256i *)&obs1p[31 + 16384 - i - 32], tmp3);
+		_mm256_storeu_si256((__m256i *)&seq1p[31 + 16384 - i - 32], tmp3);
 	}
-	obs1p[31 + 16384] = 0xC0;
+	seq1p[31 + 16384] = 0xC0;
 
 
-	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
-	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+	//seq2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t seq2p[32 + 16384 + 31];
 
 
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i + 31 + 16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	std::memcpy(&obs2p[32], &obs2[0], 16384);
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i + 31 + 16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	std::memcpy(&seq2p[32], &seq2[0], 16384);
 
 
 	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
@@ -2402,8 +2452,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		}
 		dp_pos_y[round] = now_pos_y;
 		dp_pos_x[round] = now_pos_x;
-		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[now_pos_x - 31]);
-		const __m256i sequence_tate_reverse_x4 = _mm256_loadu_si256((__m256i *)&obs1p[1 + 16384 + 31 - 32 - now_pos_y]);
+		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[now_pos_x - 31]);
+		const __m256i sequence_tate_reverse_x4 = _mm256_loadu_si256((__m256i *)&seq1p[1 + 16384 + 31 - 32 - now_pos_y]);
 		//const __m256i sequence_tate_reverse = _mm256_shuffle_epi8(_mm256_permute2x128_si256(sequence_tate, sequence_tate, 0b0000'0001), reverser);//シーケンスを逆順にしておく
 
 
@@ -2472,7 +2522,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
 	for (int i = max_pos_y, j = max_pos_x; i || j;) {
 		int score = Get(i, j);
-		if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
+		if (i && j && score == Get(i - 1, j - 1) + scorematrix[seq1[i - 1] * 4 + seq2[j - 1]]) {
 			--i;
 			--j;
 		}
@@ -2491,8 +2541,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 }
 
 std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop_111_32_70_simd_mark4(
-	const std::array<uint8_t, 16384>&obs1,
-	const std::array<uint8_t, 16384>&obs2) {
+	const std::array<uint8_t, 16384>&seq1,
+	const std::array<uint8_t, 16384>&seq2) {
 
 	//バンド幅32で、かつマスごとにXDropによる枝刈りも行うようなDPを実装した。
 
@@ -2519,28 +2569,28 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		GAP - MISMATCH, GAP - MISMATCH, GAP - MISMATCH, GAP + MATCH);//MISMATCH <= GAPだからこれでよい。
 	const __m256i reverser = _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL);
 
-	//obs1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
-	alignas(32)uint8_t obs1p[1 + 16384 + 31];
+	//seq1(縦方向)は先頭1文字と末尾31文字をパディングする。0xF0でパディングする理由は、1倍でも4倍でも5倍でも最上位ビットが立っていてほしいから。
+	alignas(32)uint8_t seq1p[1 + 16384 + 31];
 
 
 	//逆順4倍
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs1p[i]) = 0xC0C0'C0C0'C0C0'C0C0ULL;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq1p[i]) = 0xC0C0'C0C0'C0C0'C0C0ULL;
 	for (int i = 0; i < 16384; i += 32) {
-		const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&obs1[i]), (__m128i *)(&obs1[i + 16]));
+		const __m256i tmp1 = _mm256_loadu2_m128i((__m128i *)(&seq1[i]), (__m128i *)(&seq1[i + 16]));
 		const __m256i tmp2 = _mm256_shuffle_epi8(tmp1, _mm256_set_epi64x(0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL, 0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL));
 		const __m256i tmp3 = _mm256_slli_epi64(tmp2, 2);
-		_mm256_storeu_si256((__m256i *)&obs1p[31 + 16384 - i - 32], tmp3);
+		_mm256_storeu_si256((__m256i *)&seq1p[31 + 16384 - i - 32], tmp3);
 	}
-	obs1p[31 + 16384] = 0xC0;
+	seq1p[31 + 16384] = 0xC0;
 
 
-	//obs2(横方向)は先頭32文字と末尾31文字をパディングする。
-	alignas(32)uint8_t obs2p[32 + 16384 + 31];
+	//seq2(横方向)は先頭32文字と末尾31文字をパディングする。
+	alignas(32)uint8_t seq2p[32 + 16384 + 31];
 
 
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&obs2p[i + 31 + 16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
-	std::memcpy(&obs2p[32], &obs2[0], 16384);
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	for (int i = 0; i < 32; i += 8)*(uint64_t *)(&seq2p[i + 31 + 16384]) = 0xF0F0'F0F0'F0F0'F0F0ULL;
+	std::memcpy(&seq2p[32], &seq2[0], 16384);
 
 
 	constexpr int MAX_ROUND = (16384 + 1) * 2 - 1;
@@ -2590,8 +2640,8 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 		}
 		dp_pos_y[round] = now_pos_y;
 		dp_pos_x[round] = now_pos_x;
-		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&obs2p[now_pos_x - 31]);
-		const __m256i sequence_tate_reverse_x4 = _mm256_loadu_si256((__m256i *)&obs1p[1 + 16384 + 31 - 32 - now_pos_y]);
+		const __m256i sequence_yoko = _mm256_loadu_si256((__m256i *)&seq2p[now_pos_x - 31]);
+		const __m256i sequence_tate_reverse_x4 = _mm256_loadu_si256((__m256i *)&seq1p[1 + 16384 + 31 - 32 - now_pos_y]);
 
 		//スコアマトリックスのテーブル引きを、pshufbを使って16セルぶん一気に行う。
 		const __m256i index_score_matrix_8bit = _mm256_add_epi8(sequence_tate_reverse_x4, sequence_yoko);
@@ -2656,7 +2706,7 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	traceback.push_back(std::make_pair(max_pos_y, max_pos_x));
 	for (int i = max_pos_y, j = max_pos_x; i || j;) {
 		int score = Get(i, j);
-		if (i && j && score == Get(i - 1, j - 1) + scorematrix[obs1[i - 1] * 4 + obs2[j - 1]]) {
+		if (i && j && score == Get(i - 1, j - 1) + scorematrix[seq1[i - 1] * 4 + seq2[j - 1]]) {
 			--i;
 			--j;
 		}
@@ -2672,6 +2722,12 @@ std::pair<int, std::vector<std::pair<int, int>>> SemiGlobal_AdaptiveBanded_XDrop
 	std::reverse(traceback.begin(), traceback.end());
 
 	return std::make_pair(max_score - X_THRESHOLD, traceback);
+}
+
+
+
+void assembly(const std::vector<std::vector<uint8_t>>&reads) {
+
 }
 
 void TestSemiGlobal() {
@@ -3220,9 +3276,9 @@ int main(void) {
 
 	//TestSemiGlobal();
 	//InfinitySemiGlobal();
-	SpeedtestSemiGlobal();
-	SpeedtestSemiGlobal();
-	SpeedtestSemiGlobal();
+	//SpeedtestSemiGlobal();
+	//SpeedtestSemiGlobal();
+	//SpeedtestSemiGlobal();
 
 	//TestUnpack();
 	//speedtestunpack();
@@ -3234,7 +3290,7 @@ int main(void) {
 	//TestSimdSmithWaterman();
 	//InfinitySW111x32();
 	//InfinitySW();
-	//speedtest111x32();
+	speedtest111x32();
 	//speedtest111x32();
 	//speedtest111x32();
 	//SpeedTest();
