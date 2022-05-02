@@ -10,3 +10,6 @@ Visual Studio 2017のパフォーマンスプロファイリングによると�
 simd7はEPYC 7501の上ではsimd4より約1%速いが、Core i7 4770 (Haswell)の上ではsimd4のほうがsimd7より速い。
 
 simd9はsimd7から演算を増やした代わりにクリティカルパスを短くした。Xeon Gold 6136の上ではsimd7よりsimd9のほうが速かったが、EPYC 7501の上ではむしろ遅くなった。EPYC 7501はZen1世代なのでAVX2が内部的に128bitごとに処理されているためだと考えられる。
+
+FYI:
+Farrar, M. (2007). Striped Smith-Waterman speeds database searches six times over other SIMD implementations. Bioinformatics (Oxford, England), 23(2), 156–161. https://doi.org/10.1093/bioinformatics/btl582
